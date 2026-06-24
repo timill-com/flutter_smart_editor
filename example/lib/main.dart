@@ -1,6 +1,7 @@
 import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_editor/flutter_smart_editor.dart';
+import 'image_demo.dart';
 
 void main() => runApp(const SmartEditorExampleApp());
 
@@ -49,6 +50,15 @@ class _EditorDemoPageState extends State<EditorDemoPage> {
       appBar: AppBar(
         title: const Text('Flutter Smart Editor'),
         elevation: 2,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.image_outlined),
+            tooltip: 'Image demo',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const ImageDemoPage()),
+            ),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),

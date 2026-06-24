@@ -301,9 +301,12 @@ class SmartEditorSettings {
   /// `matches(ctx)` is true renders the image; an empty list (default) means
   /// only the built-in formats (JPEG/PNG/WebP/GIF/BMP) are supported.
   ///
-  /// This is the declarative "enable a format" API — see the README "Enabling
-  /// AVIF / SVG" recipes. The package never bundles a codec, so the handler
-  /// (and its dependency, e.g. `flutter_avif`/`flutter_svg`) lives in app code.
+  /// This is the declarative "enable a format" API — see the README
+  /// **"Enabling AVIF / SVG / other formats"** section for copy-paste recipes.
+  /// The package never bundles a codec, so the handler (and its dependency,
+  /// e.g. `flutter_avif`/`flutter_svg`) lives in app code. Resolution order:
+  /// `imageFormatHandlers` → [imageProvider] → built-in (network / `data:` /
+  /// memory) → error placeholder.
   final List<ImageFormatHandler> imageFormatHandlers;
 
   /// Host override mapping a stored image to a Flutter [ImageProvider] — for
@@ -349,7 +352,9 @@ class SmartEditorSettings {
 
   /// Input-side SVG switch, tri-state. `null` = auto (capture inline `<svg>`
   /// iff an SVG-capable [ImageFormatHandler] is registered); `true` = always
-  /// capture; `false` = never. See [resolveParseInlineSvg].
+  /// capture; `false` = never. See [resolveParseInlineSvg] and the README
+  /// "Enabling AVIF / SVG" recipes (note the two SVG shapes: `<img src=*.svg>`
+  /// vs inline `<svg>` markup — only the latter needs this flag).
   final bool? parseInlineSvg;
 
   /// Whether edit mode shows the interactive resize affordance.
