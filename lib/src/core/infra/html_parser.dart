@@ -3,6 +3,7 @@ import 'package:html/dom.dart' as dom;
 import 'package:flutter/painting.dart';
 import '../document/document.dart';
 import '../../models/enums.dart';
+import '../../models/image_size.dart';
 
 /// Parses an HTML string into a [Document] tree.
 ///
@@ -13,11 +14,20 @@ import '../../models/enums.dart';
 ///
 /// Unsupported tags are treated as plain text containers.
 class SmartHtmlParser {
-  SmartHtmlParser({this.autoDetectLinks = true});
+  SmartHtmlParser({this.autoDetectLinks = true, this.parseInlineSvg = false});
 
   /// When true, bare `http(s)://` / `www.` URLs found in plain text (outside of
   /// any existing `<a>`) are converted into link spans during parsing.
   final bool autoDetectLinks;
+
+  /// When true, inline `<svg>…</svg>` markup is captured verbatim into an
+  /// [ImageNode.rawSvg] (and promoted to its own block) so it survives a
+  /// parse→serialize round-trip. When false (the default), `<svg>` is dropped.
+  ///
+  /// This is the *resolved* boolean — the tri-state auto/probe logic (enable
+  /// iff an SVG-capable [ImageFormatHandler] is registered) is resolved by the
+  /// caller where the parser is built, exactly like [autoDetectLinks].
+  final bool parseInlineSvg;
 
   /// Matches scheme-prefixed (`http://`, `https://`) or `www.`-prefixed URLs.
   /// Stops at whitespace, angle brackets, or quotes.
@@ -119,9 +129,29 @@ class SmartHtmlParser {
       return;
     }
 
+    // Standalone image
+    if (tag == 'img') {
+      final node = _imageNodeFromElement(element);
+      if (node != null) blocks.add(node);
+      return;
+    }
+
+    // Standalone inline SVG (gated — captured verbatim, see parseInlineSvg)
+    if (tag == 'svg' && parseInlineSvg) {
+      blocks.add(_svgImageNode(element));
+      return;
+    }
+
     // Table
     if (tag == 'table') {
       _processTableElement(element, blocks);
+      return;
+    }
+
+    // An element whose inline content embeds an <img>/<svg> is split so the
+    // image becomes a sibling block, with surrounding text preserved (D3).
+    if (_hasPromotableDescendant(element)) {
+      _processBlockWithInlineImages(element, tag, blocks);
       return;
     }
 
@@ -146,7 +176,7 @@ class SmartHtmlParser {
   bool _isBlockTag(String tag) {
     return const {
       'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div',
-      'ul', 'ol', 'hr', 'table',
+      'ul', 'ol', 'hr', 'table', 'img',
     }.contains(tag);
   }
 
@@ -154,6 +184,9 @@ class SmartHtmlParser {
   BlockNode? _createBlock(String tag, dom.Element element) {
     // Horizontal rule
     if (tag == 'hr') return HorizontalRuleNode();
+
+    // Image (e.g. an <img> as the sole child of a table cell)
+    if (tag == 'img') return _imageNodeFromElement(element);
 
     // List containers — recurse into children
     if (tag == 'ul' || tag == 'ol') {
@@ -417,36 +450,206 @@ class SmartHtmlParser {
     }
 
     // Apply formatting based on tag
-    switch (tag) {
-      case 'b':
-      case 'strong':
-        childFormat.isBold = true;
-        break;
-      case 'i':
-      case 'em':
-        childFormat.isItalic = true;
-        break;
-      case 'u':
-      case 'ins':
-        childFormat.isUnderline = true;
-        break;
-      case 's':
-      case 'strike':
-      case 'del':
-        childFormat.isStrikethrough = true;
-        break;
-      case 'a':
-        childFormat.linkUrl = element.attributes['href'];
-        break;
-      case 'br':
-        spans.add(TextFormatSpan.plain('\n'));
-        return;
+    if (_applyInlineFormatting(tag, element, childFormat)) {
+      spans.add(TextFormatSpan.plain('\n')); // <br>
+      return;
     }
 
     // Recurse into children
     for (final child in element.nodes) {
       _extractInlineSpans(child, spans, childFormat);
     }
+  }
+
+  /// Applies inline tag semantics (bold/italic/underline/strike/link) to [fmt].
+  /// Returns true when [tag] is `<br>` (caller emits a newline and stops).
+  bool _applyInlineFormatting(String tag, dom.Element element, _InlineFormat fmt) {
+    switch (tag) {
+      case 'b':
+      case 'strong':
+        fmt.isBold = true;
+        break;
+      case 'i':
+      case 'em':
+        fmt.isItalic = true;
+        break;
+      case 'u':
+      case 'ins':
+        fmt.isUnderline = true;
+        break;
+      case 's':
+      case 'strike':
+      case 'del':
+        fmt.isStrikethrough = true;
+        break;
+      case 'a':
+        fmt.linkUrl = element.attributes['href'];
+        break;
+      case 'br':
+        return true;
+    }
+    return false;
+  }
+
+  // ─── Image Parsing ──────────────────────────────────────────
+
+  /// True if [element] has an `<img>` descendant, or an `<svg>` descendant when
+  /// [parseInlineSvg] is on — i.e. inline content that must be promoted out as
+  /// its own block.
+  bool _hasPromotableDescendant(dom.Element element) {
+    if (element.querySelectorAll('img').isNotEmpty) return true;
+    if (parseInlineSvg && element.querySelectorAll('svg').isNotEmpty) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Walks [element]'s content, promoting embedded `<img>`/`<svg>` to sibling
+  /// blocks and flushing the surrounding inline runs as blocks of the same kind
+  /// as [element] (paragraph or heading). Implements the D3 inline-image split.
+  void _processBlockWithInlineImages(
+    dom.Element element,
+    String tag,
+    List<BlockNode> blocks,
+  ) {
+    final alignment = _parseAlignment(element);
+    final pending = <TextFormatSpan>[];
+
+    void flush() {
+      if (pending.isEmpty) return;
+      // Drop whitespace-only runs (matches bare-text handling at top level).
+      if (pending.every((s) => s.text.trim().isEmpty)) {
+        pending.clear();
+        return;
+      }
+      blocks.add(_blockFromTag(tag, List<TextFormatSpan>.of(pending), alignment));
+      pending.clear();
+    }
+
+    void walk(dom.Node node, _InlineFormat fmt) {
+      if (node is dom.Text) {
+        _extractInlineSpans(node, pending, fmt);
+        return;
+      }
+      if (node is! dom.Element) return;
+      final t = node.localName?.toLowerCase() ?? '';
+      if (t == 'img') {
+        flush();
+        final img = _imageNodeFromElement(node);
+        if (img != null) blocks.add(img);
+        return;
+      }
+      if (t == 'svg' && parseInlineSvg) {
+        flush();
+        blocks.add(_svgImageNode(node));
+        return;
+      }
+
+      final childFmt = fmt.copyWith();
+      final style = node.attributes['style'] ?? '';
+      if (style.isNotEmpty) _parseInlineStyle(style, childFmt);
+      if (_applyInlineFormatting(t, node, childFmt)) {
+        pending.add(TextFormatSpan.plain('\n')); // <br>
+        return;
+      }
+      for (final child in node.nodes) {
+        walk(child, childFmt);
+      }
+    }
+
+    for (final child in element.nodes) {
+      walk(child, _InlineFormat());
+    }
+    flush();
+  }
+
+  /// Builds a paragraph or heading from [tag], used when flushing promoted runs.
+  BlockNode _blockFromTag(
+    String tag,
+    List<TextFormatSpan> spans,
+    SmartTextAlign alignment,
+  ) {
+    if (spans.isEmpty) spans = [TextFormatSpan.plain('')];
+    final level =
+        (tag.length == 2 && tag[0] == 'h') ? int.tryParse(tag.substring(1)) : null;
+    if (level != null && level >= 1 && level <= 6) {
+      return HeadingNode(level: level, spans: spans, alignment: alignment);
+    }
+    return ParagraphNode(spans: spans, alignment: alignment);
+  }
+
+  /// Builds an [ImageNode] from an `<img>` element, or null when it has no
+  /// usable `src` (matches browser behavior — a src-less `<img>` renders
+  /// nothing). Sizing precedence: CSS `style` wins over the bare attribute.
+  ImageNode? _imageNodeFromElement(dom.Element el) {
+    final src = el.attributes['src']?.trim() ?? '';
+    if (src.isEmpty) return null;
+
+    final alt = el.attributes['alt'] ?? '';
+    final title = el.attributes['title'];
+    final style = el.attributes['style'] ?? '';
+
+    ImageSize? w = ImageSize.parse(el.attributes['width']);
+    ImageSize? h = ImageSize.parse(el.attributes['height']);
+    final cssW = _cssLength(style, 'width');
+    if (cssW != null) w = cssW;
+    final cssH = _cssLength(style, 'height');
+    if (cssH != null) h = cssH;
+
+    final align = _alignFromImgStyle(style);
+
+    // Preserve every attribute we don't model with a typed field (D — full
+    // attribute round-trip): loading, srcset, crossorigin, usemap, data-*, …
+    const handled = {'src', 'alt', 'title', 'width', 'height', 'style'};
+    final extra = <String, String>{};
+    el.attributes.forEach((key, value) {
+      final name = key.toString().toLowerCase();
+      if (!handled.contains(name)) extra[name] = value;
+    });
+
+    return ImageNode(
+      src: src,
+      alt: alt,
+      title: title,
+      width: w,
+      height: h,
+      alignment: align,
+      attributes: extra,
+    );
+  }
+
+  /// Captures an inline `<svg>` element verbatim as an [ImageNode.rawSvg].
+  ImageNode _svgImageNode(dom.Element el) =>
+      ImageNode(src: '', rawSvg: el.outerHtml);
+
+  /// Reads a single CSS length declaration (`prop: <value>`) from a `style`
+  /// string and parses it to an [ImageSize]. Exact key match so `max-width`
+  /// never matches `width`.
+  ImageSize? _cssLength(String style, String prop) {
+    if (style.isEmpty) return null;
+    for (final decl in style.split(';')) {
+      final idx = decl.indexOf(':');
+      if (idx < 0) continue;
+      if (decl.substring(0, idx).trim().toLowerCase() != prop) continue;
+      return ImageSize.parse(decl.substring(idx + 1).trim());
+    }
+    return null;
+  }
+
+  /// Derives block alignment from an `<img>` style: `margin:0 auto` → center,
+  /// `float:right`/`left` → right/left, else `text-align`.
+  SmartTextAlign _alignFromImgStyle(String style) {
+    final s = style.toLowerCase();
+    if (s.contains('margin') && s.contains('auto')) return SmartTextAlign.center;
+    if (s.contains('float')) {
+      if (s.contains('right')) return SmartTextAlign.right;
+      if (s.contains('left')) return SmartTextAlign.left;
+    }
+    if (s.contains('text-align')) {
+      if (s.contains('center')) return SmartTextAlign.center;
+      if (s.contains('right')) return SmartTextAlign.right;
+    }
+    return SmartTextAlign.left;
   }
 
   /// Builds a [TextFormatSpan] carrying [fmt]'s formatting. An explicit [linkUrl]

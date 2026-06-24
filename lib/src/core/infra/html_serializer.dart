@@ -1,6 +1,7 @@
 import 'package:flutter/painting.dart';
 import '../document/document.dart';
 import '../../models/enums.dart';
+import '../../models/image_size.dart';
 
 /// Converts a [Document] tree into an HTML string.
 ///
@@ -32,6 +33,12 @@ class SmartHtmlSerializer {
 
       if (block is HorizontalRuleNode) {
         buffer.write(_serializeHr(block));
+        i++;
+        continue;
+      }
+
+      if (block is ImageNode) {
+        buffer.write(_serializeImage(block));
         i++;
         continue;
       }
@@ -133,6 +140,66 @@ class SmartHtmlSerializer {
     final custom = onTagSerialize?.call(
         SmartTagType.horizontalRule, 'hr', {}, {}, '');
     return custom ?? '<hr/>';
+  }
+
+  /// Serializes an [ImageNode] as a void `<img …/>`, with sizing emitted both as
+  /// bare attributes (px only — max compatibility) and CSS `style`, and every
+  /// preserved attribute re-emitted. Inline-SVG nodes re-emit their raw markup.
+  String _serializeImage(ImageNode b) {
+    // Inline <svg> captured verbatim — re-emit as-is (still interceptable).
+    if (b.rawSvg != null) {
+      final custom =
+          onTagSerialize?.call(SmartTagType.image, 'svg', {}, {}, b.rawSvg!);
+      return custom ?? b.rawSvg!;
+    }
+
+    final attrs = <String, String>{'src': b.src};
+    if (b.alt.isNotEmpty) attrs['alt'] = b.alt;
+    if (b.title != null) attrs['title'] = b.title!;
+    // px sizing also emitted as bare attrs (old renderers ignore CSS).
+    if (b.width?.unit == ImageSizeUnit.px) {
+      attrs['width'] = b.width!.value!.round().toString();
+    }
+    if (b.height?.unit == ImageSizeUnit.px) {
+      attrs['height'] = b.height!.value!.round().toString();
+    }
+    // Preserve all round-tripped attributes (loading, srcset, crossorigin, …)
+    // without clobbering the typed ones above.
+    b.attributes.forEach((k, v) => attrs.putIfAbsent(k, () => v));
+
+    final styles = <String, String>{};
+    if (b.width != null) styles['width'] = b.width!.toCss();
+    if (b.height != null) styles['height'] = b.height!.toCss();
+    if (b.alignment == SmartTextAlign.center) {
+      styles['display'] = 'block';
+      styles['margin'] = '0 auto';
+    } else if (b.alignment == SmartTextAlign.right) {
+      styles['float'] = 'right';
+    }
+
+    return _wrapImgTag(SmartTagType.image, attrs, styles, b);
+  }
+
+  /// Void-element variant of [_wrapTag] for `<img>`: still calls
+  /// [onTagSerialize] (identical interceptor contract) but emits `<img …/>`
+  /// with no closing tag.
+  String _wrapImgTag(
+    SmartTagType type,
+    Map<String, String> attributes,
+    Map<String, String> styles,
+    ImageNode block,
+  ) {
+    final custom = onTagSerialize?.call(type, 'img', attributes, styles, '');
+    if (custom != null) return custom;
+
+    if (styles.isNotEmpty) {
+      attributes['style'] =
+          styles.entries.map((e) => '${e.key}: ${e.value}').join('; ');
+    }
+    final attrString = attributes.entries
+        .map((e) => ' ${e.key}="${_escapeAttr(e.value)}"')
+        .join('');
+    return '<img$attrString/>';
   }
 
   /// Serializes a contiguous group of [ListItemNode]s into nested <ul>/<ol> HTML.
