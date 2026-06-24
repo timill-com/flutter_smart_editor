@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 import '../../../smart_editor_controller.dart';
 import '../../core/document/document_controller.dart';
 import '../../models/enums.dart';
+import '../../models/image_insert.dart';
 import '../../models/pending_inline_format.dart';
 import '../../models/toolbar_settings.dart';
 import '../../models/toolbar/toolbar_index.dart';
@@ -148,6 +149,30 @@ class SmartToolbarState extends State<SmartToolbar> {
     widget.onFocusRequested?.call();
   }
 
+  /// Obtains an image source (host's [onImagePickRequested], or a built-in
+  /// "image URL" dialog when none is provided) and inserts it via the
+  /// controller — which routes it through `onImageInsert`.
+  Future<void> _handleInsertImage() async {
+    final picker = widget.controller.onImagePickRequested;
+    final request =
+        picker != null ? await picker() : await _showImageUrlDialog();
+    if (request == null) return;
+    await widget.controller.insertImage(request);
+    widget.onFormatApplied?.call();
+    _syncToolbarAfterDocumentChange();
+  }
+
+  /// The dependency-free fallback picker: a dialog that takes an image URL.
+  Future<ImageInsertRequest?> _showImageUrlDialog() async {
+    if (!mounted) return null;
+    final url = await showDialog<String>(
+      context: context,
+      builder: (ctx) => const _ImageUrlDialog(),
+    );
+    if (url == null || url.isEmpty) return null;
+    return ImageInsertRequest(src: url, origin: ImageInsertSource.toolbar);
+  }
+
   PendingInlineFormat _buildPendingInlineFormat() {
     return PendingInlineFormat(
       isBold: _activeFormats[SmartButtonType.bold] == true,
@@ -259,6 +284,11 @@ class SmartToolbarState extends State<SmartToolbar> {
       widget.documentController.insertHorizontalRule(blockIndex);
       widget.onFormatApplied?.call();
       _syncToolbarAfterDocumentChange();
+      _finishToolbarAction();
+      return;
+    }
+    if (type == SmartButtonType.insertImage) {
+      _handleInsertImage();
       _finishToolbarAction();
       return;
     }
@@ -729,4 +759,50 @@ class SmartToolbarState extends State<SmartToolbar> {
         );
   }
 
+}
+
+/// Built-in "image URL" dialog used when the host provides no
+/// `onImagePickRequested`. Owns its [TextEditingController] so it's disposed
+/// safely after the route closes. Pops the entered URL (or null on cancel).
+class _ImageUrlDialog extends StatefulWidget {
+  const _ImageUrlDialog();
+
+  @override
+  State<_ImageUrlDialog> createState() => _ImageUrlDialogState();
+}
+
+class _ImageUrlDialogState extends State<_ImageUrlDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Insert image'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: TextInputType.url,
+        decoration: const InputDecoration(
+          hintText: 'https://example.com/image.png',
+          labelText: 'Image URL',
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        TextButton(onPressed: _submit, child: const Text('Insert')),
+      ],
+    );
+  }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_smart_editor/src/core/document/document.dart';
 import '../../models/enums.dart';
+import '../../models/image_insert.dart';
 import '../infra/html_parser.dart';
 import '../infra/html_serializer.dart';
 import 'undo_redo_manager.dart';
@@ -598,8 +599,11 @@ class DocumentController extends ChangeNotifier {
     final previous = document.blocks[blockIndex - 1];
     final current = document.blocks[blockIndex];
 
-    // Don't merge text into non-text blocks like HR
-    if (previous is HorizontalRuleNode || current is HorizontalRuleNode) {
+    // Don't merge text into non-text blocks like HR or images
+    if (previous is HorizontalRuleNode ||
+        current is HorizontalRuleNode ||
+        previous is ImageNode ||
+        current is ImageNode) {
       if (current.textLength == 0) {
         // Just delete the empty block
         _saveState();
@@ -797,6 +801,22 @@ class DocumentController extends ChangeNotifier {
     final hr = HorizontalRuleNode();
     final para = ParagraphNode();
     document.blocks.insertAll(blockIndex + 1, [hr, para]);
+    _notifyChanged();
+  }
+
+  /// Inserts an [ImageNode] after the block at [blockIndex], from a resolved
+  /// [ImageInsertResult]. A trailing empty paragraph follows so the cursor can
+  /// continue past the (non-text) image block. Mirrors [insertHorizontalRule].
+  void insertImage(int blockIndex, ImageInsertResult r) {
+    if (blockIndex < 0 || blockIndex >= document.blocks.length) return;
+    _saveState();
+    final img = ImageNode(
+      src: r.src,
+      alt: r.alt ?? '',
+      width: r.width,
+      height: r.height,
+    );
+    document.blocks.insertAll(blockIndex + 1, [img, ParagraphNode()]);
     _notifyChanged();
   }
 

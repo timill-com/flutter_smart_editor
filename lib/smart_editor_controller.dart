@@ -7,6 +7,8 @@ import 'src/core/infra/html_serializer.dart';
 import 'src/core/document/undo_redo_manager.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 import 'src/models/enums.dart';
+import 'src/models/image_insert.dart';
+import 'src/models/image_size.dart';
 import 'src/widgets/editor/smart_editor_widget.dart';
 import 'src/widgets/toolbar/smart_toolbar_widget.dart';
 import 'dart:async';
@@ -61,8 +63,30 @@ class SmartEditorController extends ChangeNotifier {
   /// Set by [SmartEditor] from `SmartEditorSettings.linkTargetBlank`.
   bool linkTargetBlank = true;
 
-  SmartHtmlParser get _parser =>
-      SmartHtmlParser(autoDetectLinks: autoDetectLinks);
+  /// Resolved inline-`<svg>` capture flag. Set by [SmartEditor] from
+  /// `SmartEditorSettings.parseInlineSvg` (after the auto/probe resolution).
+  bool parseInlineSvg = false;
+
+  /// The image upload/swap hook. Pushed by [SmartEditor] from
+  /// `SmartEditorSettings.onImageInsert`.
+  Future<ImageInsertResult?> Function(ImageInsertRequest request)? onImageInsert;
+
+  /// The toolbar picture-button source callback. Pushed from
+  /// `SmartEditorSettings.onImagePickRequested`.
+  Future<ImageInsertRequest?> Function()? onImagePickRequested;
+
+  /// Width applied to inserted images that declare none. Pushed from
+  /// `SmartEditorSettings.defaultImageWidth`.
+  ImageSize? defaultImageWidth;
+
+  /// Whether parse-time `data:` URIs are routed through [onImageInsert]. Pushed
+  /// from `SmartEditorSettings.resolveDataUris`.
+  bool resolveDataUris = false;
+
+  SmartHtmlParser get _parser => SmartHtmlParser(
+        autoDetectLinks: autoDetectLinks,
+        parseInlineSvg: parseInlineSvg,
+      );
 
   Timer? _clipboardTimer;
 
@@ -136,6 +160,7 @@ class SmartEditorController extends ChangeNotifier {
     final document = _parser.parse(html);
     _documentController.setDocument(document);
     _editorWidgetState?.rebuild();
+    resolveDataUriImages();
   }
 
   /// Inserts plain text at the current cursor position.
@@ -447,6 +472,71 @@ class SmartEditorController extends ChangeNotifier {
     }
 
     return html;
+  }
+
+  // ─── Image Methods ─────────────────────────────────────────────
+
+  /// Inserts an image after the currently focused block. Routes [request]
+  /// through [onImageInsert] (or stores the source as-is when no hook is set),
+  /// then inserts the resulting [ImageNode]. Returning null from the hook — or
+  /// a request with nothing to store — cancels the insert.
+  Future<void> insertImage(ImageInsertRequest request) async {
+    final result =
+        await resolveImageInsert(request, onImageInsert, defaultImageWidth);
+    if (result == null) return;
+    final blockIndex = _editorWidgetState?.focusedBlockIndex ?? 0;
+    _documentController.insertImage(blockIndex, result);
+    _editorWidgetState?.rebuild();
+  }
+
+  Future<void>? _dataUriResolve;
+
+  /// Post-parse async pass: when [resolveDataUris] is on and [onImageInsert] is
+  /// set, walks the document for `data:` URI images, routes each through
+  /// [onImageInsert], and swaps `src` in place (one undo-free model edit).
+  /// No-op otherwise. Concurrent calls share a single in-flight pass.
+  Future<void> resolveDataUriImages() {
+    if (!resolveDataUris || onImageInsert == null) return Future.value();
+    return _dataUriResolve ??=
+        _doResolveDataUriImages().whenComplete(() => _dataUriResolve = null);
+  }
+
+  Future<void> _doResolveDataUriImages() async {
+    final hook = onImageInsert;
+    if (hook == null) return;
+    final images = _documentController.document.blocks
+        .whereType<ImageNode>()
+        .where((n) => n.isDataUri)
+        .toList();
+    var changed = false;
+    for (final node in images) {
+      final mime = _mimeFromDataUri(node.src);
+      final result = await hook(ImageInsertRequest(
+        src: node.src,
+        mimeType: mime,
+        origin: ImageInsertSource.parse,
+      ));
+      if (result != null) {
+        node.src = result.src;
+        if (result.alt != null) node.alt = result.alt!;
+        if (result.width != null) node.width = result.width;
+        if (result.height != null) node.height = result.height;
+        changed = true;
+      }
+    }
+    if (changed) {
+      _editorWidgetState?.rebuild();
+      _safeNotifyListeners();
+    }
+  }
+
+  /// Extracts the MIME type from a `data:<mime>[;...],...` URI, or null.
+  String? _mimeFromDataUri(String src) {
+    if (!src.startsWith('data:')) return null;
+    final comma = src.indexOf(',');
+    if (comma < 0) return null;
+    final mime = src.substring(5, comma).split(';').first.trim();
+    return mime.isEmpty ? null : mime;
   }
 
   // ─── Table Methods ─────────────────────────────────────────────

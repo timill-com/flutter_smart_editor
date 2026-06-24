@@ -86,3 +86,20 @@ class ImageFormatHandler {
   /// (alignment, sizing, tap, error placeholder).
   final Widget Function(ImageRenderContext ctx) build;
 }
+
+/// Resolves the tri-state `parseInlineSvg` flag to a concrete bool used by the
+/// parser. Explicit `true`/`false` always wins; `null` (auto) probes [handlers]
+/// with a representative SVG context and enables capture iff one matches —
+/// so registering an SVG handler turns inline-`<svg>` capture on for free.
+///
+/// Contract: an SVG handler must key its `matches` off `ctx.isSvg` for the
+/// probe to detect it (the recommended snippet does).
+bool resolveParseInlineSvg(bool? flag, List<ImageFormatHandler> handlers) {
+  if (flag != null) return flag;
+  final probe = ImageRenderContext(
+    node: ImageNode(src: 'probe.svg'),
+    src: 'probe.svg',
+    mimeType: 'image/svg+xml',
+  );
+  return handlers.any((h) => h.matches(probe));
+}

@@ -38,11 +38,35 @@ class TableButtonGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!group.table) return const SizedBox.shrink();
-
     final buttons = <Widget>[];
 
-    // ── Always visible: Insert Table (grid picker) ──
+    // ── Insert Image (picture button) ──
+    if (group.picture) {
+      buttons.add(SizedBox(
+        width: itemHeight,
+        height: itemHeight,
+        child: IconButton(
+          icon: Icon(Icons.image_outlined,
+              size: buttonIconSize,
+              color: enabled ? onSurface : disabledColor),
+          tooltip: 'Insert Image',
+          onPressed: enabled ? () => onAction(SmartButtonType.insertImage) : null,
+          constraints:
+              BoxConstraints.tightFor(width: itemHeight, height: itemHeight),
+          style: IconButton.styleFrom(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+      ));
+    }
+
+    if (!group.table) {
+      return buttons.isEmpty
+          ? const SizedBox.shrink()
+          : Row(mainAxisSize: MainAxisSize.min, children: buttons);
+    }
+
+    // ── Always visible (when table enabled): Insert Table (grid picker) ──
     buttons.add(_InsertTableButton(
       onAction: onAction,
       onSurface: onSurface,

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'enums.dart';
 import 'image_render.dart';
+import 'image_insert.dart';
+import 'image_size.dart';
 import 'nodes/node_index.dart';
 
 /// Comprehensive settings for the editor's behavior, style, and events.
@@ -87,6 +89,12 @@ class SmartEditorSettings {
     this.onImageTap,
     this.onImageError,
     this.maxImageWidth,
+    this.onImageInsert,
+    this.onImagePickRequested,
+    this.resolveDataUris = false,
+    this.defaultImageWidth,
+    this.parseInlineSvg,
+    this.allowImageResize = true,
   });
 
   // ─── Core & HTML ──────────────────────────────────────────────
@@ -314,6 +322,38 @@ class SmartEditorSettings {
   /// Clamp for rendered display width in px, independent of the stored size.
   /// Null = no clamp.
   final double? maxImageWidth;
+
+  /// **The upload/swap hook.** Called when a user adds an image (toolbar pick,
+  /// paste, or a `data:` URI at parse time when [resolveDataUris] is on).
+  /// Receives the source (URL / bytes / data-URI) and returns the canonical
+  /// `src` (+ optional alt/size) to store. Returning null cancels the insert.
+  /// Null hook = store the source as-is (raw bytes become a base64 `data:` URI).
+  final Future<ImageInsertResult?> Function(ImageInsertRequest request)?
+      onImageInsert;
+
+  /// Invoked by the toolbar picture button to obtain an image. The host shows
+  /// its own picker / URL dialog (the package stays free of
+  /// `image_picker`/`file_picker`) and returns an [ImageInsertRequest], or null
+  /// to cancel. When null, the toolbar falls back to a built-in "image URL"
+  /// dialog.
+  final Future<ImageInsertRequest?> Function()? onImagePickRequested;
+
+  /// When true **and** [onImageInsert] is set, `data:` URIs found at parse/paste
+  /// time are routed through [onImageInsert] (a post-parse async pass) so the
+  /// host can upload-and-swap embedded base64 to a URL. Default false renders
+  /// the data URI in place.
+  final bool resolveDataUris;
+
+  /// Width applied to inserted images that declare none.
+  final ImageSize? defaultImageWidth;
+
+  /// Input-side SVG switch, tri-state. `null` = auto (capture inline `<svg>`
+  /// iff an SVG-capable [ImageFormatHandler] is registered); `true` = always
+  /// capture; `false` = never. See [resolveParseInlineSvg].
+  final bool? parseInlineSvg;
+
+  /// Whether edit mode shows the interactive resize affordance.
+  final bool allowImageResize;
 }
 
 /// Styling configuration for the `<hr>` horizontal rule block.

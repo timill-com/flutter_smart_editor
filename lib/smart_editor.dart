@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'smart_editor_controller.dart';
 import 'src/core/infra/html_parser.dart';
 import 'src/models/editor_settings.dart';
+import 'src/models/image_render.dart';
 import 'src/models/toolbar_settings.dart';
 import 'src/models/enums.dart';
 import 'src/models/pending_inline_format.dart';
@@ -54,18 +55,38 @@ class _SmartEditorState extends State<SmartEditor> {
       GlobalKey<SmartEditorWidgetState>();
   final GlobalKey<SmartToolbarState> _toolbarKey =
       GlobalKey<SmartToolbarState>();
-  late final SmartHtmlParser _parser =
-      SmartHtmlParser(autoDetectLinks: widget.editorSettings.autoDetectLinks);
+  late final SmartHtmlParser _parser = SmartHtmlParser(
+    autoDetectLinks: widget.editorSettings.autoDetectLinks,
+    parseInlineSvg: resolveParseInlineSvg(
+      widget.editorSettings.parseInlineSvg,
+      widget.editorSettings.imageFormatHandlers,
+    ),
+  );
 
   @override
   void initState() {
     super.initState();
+
+    // Push image-related callbacks/flags onto the controller (mirrors how
+    // onTagSerialize / autoDetectLinks are pushed below).
+    widget.controller.onImageInsert = widget.editorSettings.onImageInsert;
+    widget.controller.onImagePickRequested =
+        widget.editorSettings.onImagePickRequested;
+    widget.controller.defaultImageWidth =
+        widget.editorSettings.defaultImageWidth;
+    widget.controller.resolveDataUris = widget.editorSettings.resolveDataUris;
+    widget.controller.parseInlineSvg = resolveParseInlineSvg(
+      widget.editorSettings.parseInlineSvg,
+      widget.editorSettings.imageFormatHandlers,
+    );
 
     // Parse initial text if provided
     if (widget.editorSettings.initialText != null &&
         widget.editorSettings.initialText!.isNotEmpty) {
       final document = _parser.parse(widget.editorSettings.initialText);
       widget.controller.documentController.document = document;
+      // Upload-and-swap any embedded data: URIs (no-op unless configured).
+      widget.controller.resolveDataUriImages();
     }
 
     // Apply disabled state

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -7,12 +8,23 @@ import '../../core/document/document_controller.dart';
 import '../../core/infra/html_serializer.dart';
 import '../../models/editor_settings.dart';
 import '../../models/enums.dart';
+import '../../models/image_insert.dart';
+import '../../models/image_render.dart';
 import '../../models/pending_inline_format.dart';
 import '../blocks/block_widget.dart';
 import '../blocks/table_block_widget.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 import '../../core/infra/html_parser.dart';
 import 'keyboard_done_overlay.dart';
+
+/// `super_clipboard` ships no AVIF format, so we define one. Best-effort: only
+/// fires when the OS actually exposes AVIF bytes on the clipboard (uncommon —
+/// most platforms transcode pasted raster images to PNG/TIFF). Rendered by a
+/// consumer AVIF handler; AVIF via URL/data-URI/HTML paste works regardless.
+const SimpleFileFormat _avifClipboardFormat = SimpleFileFormat(
+  uniformTypeIdentifiers: ['public.avif'],
+  mimeTypes: ['image/avif'],
+);
 
 /// The main editor widget that renders the document as a list of blocks.
 ///
@@ -466,16 +478,91 @@ class SmartEditorWidgetState extends State<SmartEditorWidget> {
     _notifyContentChanged();
   }
 
+  /// Image formats checked on paste, mapped to the MIME type stored on the
+  /// embedded `data:` URI. Iteration order matters: formats Flutter's `dart:ui`
+  /// decoder handles natively come first, so when the clipboard offers several
+  /// representations of one image we prefer the directly-renderable one. The
+  /// handler-required formats below (svg/heic/heif/tiff/avif) only render when
+  /// the consumer registers a matching `ImageFormatHandler`; otherwise they are
+  /// still stored and round-tripped, shown as the error placeholder.
+  static const Map<SimpleFileFormat, String> _imagePasteFormats = {
+    // Natively decodable by Flutter.
+    Formats.png: 'image/png',
+    Formats.jpeg: 'image/jpeg',
+    Formats.gif: 'image/gif',
+    Formats.webp: 'image/webp',
+    Formats.bmp: 'image/bmp',
+    // Handler-required (no dart:ui decoder).
+    Formats.svg: 'image/svg+xml',
+    Formats.heic: 'image/heic',
+    Formats.heif: 'image/heif',
+    Formats.tiff: 'image/tiff',
+    _avifClipboardFormat: 'image/avif',
+  };
+
+  /// Resolves an [ImageInsertRequest] (through `onImageInsert` if set) and
+  /// inserts the image after [blockIndex]. Shared by the paste branch.
+  Future<void> _insertImageRequest(
+      int blockIndex, ImageInsertRequest request) async {
+    final result = await resolveImageInsert(
+      request,
+      widget.editorSettings.onImageInsert,
+      widget.editorSettings.defaultImageWidth,
+    );
+    if (result == null) return;
+    _docController.insertImage(blockIndex, result);
+    rebuild();
+  }
+
+  /// A parser configured from the current settings (auto-link + resolved
+  /// inline-`<svg>` capture), used for pasted HTML.
+  SmartHtmlParser get _imageAwareParser => SmartHtmlParser(
+        autoDetectLinks: widget.editorSettings.autoDetectLinks,
+        parseInlineSvg: resolveParseInlineSvg(
+          widget.editorSettings.parseInlineSvg,
+          widget.editorSettings.imageFormatHandlers,
+        ),
+      );
+
   /// Handles paste events from the BlockWidget
   void _onPaste(int blockIndex) async {
     try {
       final reader = await SystemClipboard.instance?.read();
+
+      // Image bytes take priority over HTML/plain-text branches.
+      if (reader != null) {
+        for (final entry in _imagePasteFormats.entries) {
+          if (!reader.canProvide(entry.key)) continue;
+          final completer = Completer<Uint8List?>();
+          reader.getFile(entry.key, (file) async {
+            try {
+              completer.complete(await file.readAll());
+            } catch (_) {
+              if (!completer.isCompleted) completer.complete(null);
+            }
+          }, onError: (_) {
+            if (!completer.isCompleted) completer.complete(null);
+          });
+          final bytes = await completer.future;
+          if (bytes != null && bytes.isNotEmpty) {
+            await _insertImageRequest(
+              blockIndex,
+              ImageInsertRequest(
+                bytes: bytes,
+                mimeType: entry.value,
+                origin: ImageInsertSource.paste,
+              ),
+            );
+          }
+          widget.editorSettings.onPaste?.call();
+          return;
+        }
+      }
+
       if (reader != null && reader.canProvide(Formats.htmlText)) {
         final html = await reader.readValue(Formats.htmlText);
         if (html != null && html.isNotEmpty) {
-          final parser = SmartHtmlParser(
-              autoDetectLinks: widget.editorSettings.autoDetectLinks);
-          final parsed = parser.parse(html);
+          final parsed = _imageAwareParser.parse(html);
           if (parsed.blocks.isNotEmpty) {
             _docController.insertParsedDocument(
               blockIndex,
@@ -499,9 +586,7 @@ class SmartEditorWidgetState extends State<SmartEditorWidget> {
           final isLikelyHtml =
               RegExp(r'<[a-z][\s\S]*>', caseSensitive: false).hasMatch(text);
           if (widget.editorSettings.processInputHtml && isLikelyHtml) {
-            final parser = SmartHtmlParser(
-                autoDetectLinks: widget.editorSettings.autoDetectLinks);
-            final parsed = parser.parse(text);
+            final parsed = _imageAwareParser.parse(text);
             if (parsed.blocks.isNotEmpty) {
               _docController.insertParsedDocument(
                 blockIndex,

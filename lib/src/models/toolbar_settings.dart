@@ -27,7 +27,7 @@ class SmartToolbarSettings {
       SmartListButtons(hr: true),
       SmartInsertButtons(
         link: false,
-        picture: false,
+        picture: true,
         audio: false,
         video: false,
         table: false,
