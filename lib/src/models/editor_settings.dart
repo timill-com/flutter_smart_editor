@@ -63,6 +63,12 @@ class SmartEditorSettings {
     this.onPaste,
     this.onTagSerialize,
 
+    // Links
+    this.onLinkTap,
+    this.linkStyle,
+    this.autoDetectLinks = true,
+    this.linkTargetBlank = true,
+
     // Lists & HR
     this.maxListDepth = 3,
     this.defaultBulletStyle = SmartBulletStyle.filledCircle,
@@ -220,6 +226,26 @@ class SmartEditorSettings {
           Map<String, String> styles,
           String content)?
       onTagSerialize;
+
+  // ─── Links ────────────────────────────────────────────────────
+
+  /// Called with the `href` when a rendered link span is tapped in read-only
+  /// mode. Taps inside the editable editor never fire (Flutter's `EditableText`
+  /// consumes pointer events), so this only applies when `readOnly` is true.
+  final void Function(String url)? onLinkTap;
+
+  /// Optional style for link spans, merged over the default link appearance
+  /// (blue `#1A73E8` + underline). Applies in both edit and read-only modes.
+  final TextStyle? linkStyle;
+
+  /// Auto-convert bare `http(s)://` / `www.` URLs in text into links.
+  /// Applies on initial load, `setText`, `insertHtml`, and paste.
+  /// Defaults to true. Set false to only honour explicit `<a>` tags.
+  final bool autoDetectLinks;
+
+  /// When true (default), serialized `<a>` tags open in a new tab:
+  /// `target="_blank" rel="noopener noreferrer"`. Set false to omit both.
+  final bool linkTargetBlank;
 
   // ─── Lists & HR ───────────────────────────────────────────────
 

@@ -13,6 +13,26 @@ import '../../models/enums.dart';
 ///
 /// Unsupported tags are treated as plain text containers.
 class SmartHtmlParser {
+  SmartHtmlParser({this.autoDetectLinks = true});
+
+  /// When true, bare `http(s)://` / `www.` URLs found in plain text (outside of
+  /// any existing `<a>`) are converted into link spans during parsing.
+  final bool autoDetectLinks;
+
+  /// Matches scheme-prefixed (`http://`, `https://`) or `www.`-prefixed URLs.
+  /// Stops at whitespace, angle brackets, or quotes.
+  static final RegExp _urlPattern = RegExp(
+    r'(?:https?:\/\/|www\.)[^\s<>"' "'" r']+',
+    caseSensitive: false,
+  );
+
+  /// Trailing characters trimmed off a detected URL (sentence punctuation and
+  /// closing brackets) so they stay as plain text.
+  static const String _trailingPunct = '.,;:!?)]}>"\'';
+
+  /// True if [text] contains at least one auto-detectable URL.
+  static bool containsUrl(String text) => _urlPattern.hasMatch(text);
+
   /// Parses an HTML string into a [Document].
   ///
   /// If the input is empty or null, returns a document with a single
@@ -39,6 +59,30 @@ class SmartHtmlParser {
       block.normalizeSpans();
     }
 
+    return Document(blocks: blocks);
+  }
+
+  /// Builds a [Document] from raw plain text (e.g. a clipboard paste), one
+  /// paragraph per line, auto-linking bare URLs when [autoDetectLinks] is on.
+  Document parsePlainText(String text) {
+    final blocks = <BlockNode>[];
+    for (final line in text.split('\n')) {
+      final spans = <TextFormatSpan>[];
+      if (line.isNotEmpty) {
+        if (autoDetectLinks) {
+          _appendAutolinkedSpans(line, _InlineFormat(), spans);
+        } else {
+          spans.add(TextFormatSpan.plain(line));
+        }
+      }
+      blocks.add(ParagraphNode(
+        spans: spans.isEmpty ? [TextFormatSpan.plain('')] : spans,
+      ));
+    }
+    if (blocks.isEmpty) blocks.add(ParagraphNode());
+    for (final block in blocks) {
+      block.normalizeSpans();
+    }
     return Document(blocks: blocks);
   }
 
@@ -350,18 +394,12 @@ class SmartHtmlParser {
     if (node is dom.Text) {
       final text = node.text;
       if (text.isNotEmpty) {
-        spans.add(TextFormatSpan(
-          text: text,
-          isBold: parentFormat.isBold,
-          isItalic: parentFormat.isItalic,
-          isUnderline: parentFormat.isUnderline,
-          isStrikethrough: parentFormat.isStrikethrough,
-          linkUrl: parentFormat.linkUrl,
-          fontSize: parentFormat.fontSize,
-          fontFamily: parentFormat.fontFamily,
-          foregroundColor: parentFormat.foregroundColor,
-          backgroundColor: parentFormat.backgroundColor,
-        ));
+        // Auto-link bare URLs only in text that isn't already inside an <a>.
+        if (autoDetectLinks && parentFormat.linkUrl == null) {
+          _appendAutolinkedSpans(text, parentFormat, spans);
+        } else {
+          spans.add(_spanFromFormat(text, parentFormat));
+        }
       }
       return;
     }
@@ -408,6 +446,65 @@ class SmartHtmlParser {
     // Recurse into children
     for (final child in element.nodes) {
       _extractInlineSpans(child, spans, childFormat);
+    }
+  }
+
+  /// Builds a [TextFormatSpan] carrying [fmt]'s formatting. An explicit [linkUrl]
+  /// overrides `fmt.linkUrl` (used when auto-linking a sub-range of plain text).
+  TextFormatSpan _spanFromFormat(
+    String text,
+    _InlineFormat fmt, {
+    String? linkUrl,
+  }) {
+    return TextFormatSpan(
+      text: text,
+      isBold: fmt.isBold,
+      isItalic: fmt.isItalic,
+      isUnderline: fmt.isUnderline,
+      isStrikethrough: fmt.isStrikethrough,
+      linkUrl: linkUrl ?? fmt.linkUrl,
+      fontSize: fmt.fontSize,
+      fontFamily: fmt.fontFamily,
+      foregroundColor: fmt.foregroundColor,
+      backgroundColor: fmt.backgroundColor,
+    );
+  }
+
+  /// Splits [text] into plain and link spans, detecting bare URLs and appending
+  /// the result to [out]. `www.`-prefixed URLs get an `https://` scheme in the
+  /// href while keeping their original visible text.
+  void _appendAutolinkedSpans(
+    String text,
+    _InlineFormat fmt,
+    List<TextFormatSpan> out,
+  ) {
+    var last = 0;
+    for (final match in _urlPattern.allMatches(text)) {
+      var url = match.group(0)!;
+      var end = match.end;
+
+      // Trim trailing sentence punctuation back into the plain run.
+      while (url.isNotEmpty && _trailingPunct.contains(url[url.length - 1])) {
+        url = url.substring(0, url.length - 1);
+        end--;
+      }
+      if (url.isEmpty) continue;
+
+      if (match.start > last) {
+        out.add(_spanFromFormat(text.substring(last, match.start), fmt));
+      }
+
+      final href = url.toLowerCase().startsWith('www.') ? 'https://$url' : url;
+      out.add(_spanFromFormat(url, fmt, linkUrl: href));
+      last = end;
+    }
+
+    if (last < text.length) {
+      out.add(_spanFromFormat(text.substring(last), fmt));
+    }
+    // Guard: a text node consisting solely of a trimmed-away match.
+    if (out.isEmpty) {
+      out.add(_spanFromFormat(text, fmt));
     }
   }
 

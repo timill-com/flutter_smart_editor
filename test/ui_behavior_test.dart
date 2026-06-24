@@ -34,5 +34,9 @@ void main() {
     // Check formatting directly in the document
     final spans = controller.document.blocks[0].spans;
     print('SPANS AFTER BOLD: $spans');
+
+    // Dispose within the body so the controller's periodic clipboard timer is
+    // cancelled before the framework's pending-timer invariant check runs.
+    controller.dispose();
   });
 }

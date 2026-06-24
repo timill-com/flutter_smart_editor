@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/document/document.dart';
@@ -86,6 +87,10 @@ class BlockWidgetState extends State<BlockWidget> {
   TextSelection _lastReportedSelection =
       const TextSelection.collapsed(offset: 1);
 
+  /// Tap recognizers for link spans in read-only mode. Rebuilt on each render
+  /// and disposed to avoid leaks.
+  final List<TapGestureRecognizer> _linkRecognizers = [];
+
   @override
   void initState() {
     super.initState();
@@ -123,6 +128,7 @@ class BlockWidgetState extends State<BlockWidget> {
     _textController.baseFontSize = _getBlockBaseFontSize();
     _textController.baseFontWeight = _getFontWeight();
     _textController.defaultColor = defaultColor;
+    _textController.linkStyle = widget.editorSettings.linkStyle;
     _textController.refresh();
 
     if (mounted) setState(() {});
@@ -130,6 +136,10 @@ class BlockWidgetState extends State<BlockWidget> {
 
   @override
   void dispose() {
+    for (final r in _linkRecognizers) {
+      r.dispose();
+    }
+    _linkRecognizers.clear();
     _textController.removeListener(_onControllerChanged);
     _textController.dispose();
     super.dispose();
@@ -420,11 +430,17 @@ class BlockWidgetState extends State<BlockWidget> {
       ),
     );
 
+    // In read-only mode, render a non-editable rich-text leaf so link spans can
+    // be styled AND tapped (a TapGestureRecognizer inside a TextField never
+    // fires). The list-item / drag wrappers below are unchanged.
+    final Widget leaf =
+        widget.readOnly ? _buildReadOnlyContent(defaultColor) : textField;
+
     Widget content;
     if (widget.block is ListItemNode) {
-      content = _buildListItemWrapper(context, textField);
+      content = _buildListItemWrapper(context, leaf);
     } else {
-      content = textField;
+      content = leaf;
     }
 
     final isBlockTypeDraggable = widget.editorSettings.draggableBlockTypes
@@ -448,6 +464,51 @@ class BlockWidgetState extends State<BlockWidget> {
         ),
         Expanded(child: content),
       ],
+    );
+  }
+
+  /// Builds a non-editable, selectable rich-text view of the block for
+  /// read-only mode. Link spans get a [TapGestureRecognizer] wired to
+  /// [SmartEditorSettings.onLinkTap]; selection/copy is preserved.
+  Widget _buildReadOnlyContent(Color defaultColor) {
+    for (final r in _linkRecognizers) {
+      r.dispose();
+    }
+    _linkRecognizers.clear();
+
+    final baseFontSize = _getBlockBaseFontSize();
+    final baseWeight = _getFontWeight();
+    final onLinkTap = widget.editorSettings.onLinkTap;
+
+    final children = <InlineSpan>[];
+    for (final span in widget.block.spans) {
+      final isLink = span.linkUrl != null && span.linkUrl!.isNotEmpty;
+      TapGestureRecognizer? recognizer;
+      if (isLink && onLinkTap != null) {
+        final url = span.linkUrl!;
+        recognizer = TapGestureRecognizer()..onTap = () => onLinkTap(url);
+        _linkRecognizers.add(recognizer);
+      }
+      children.add(TextSpan(
+        text: span.text,
+        style: buildSpanTextStyle(
+          span,
+          baseFontSize: baseFontSize,
+          baseFontWeight: baseWeight,
+          defaultColor: defaultColor,
+          linkStyle: widget.editorSettings.linkStyle,
+        ),
+        recognizer: recognizer,
+      ));
+    }
+
+    return SelectableText.rich(
+      TextSpan(
+        style:
+            _getTextStyle(widget.editorSettings.defaultFontSize, defaultColor),
+        children: children,
+      ),
+      textAlign: _getTextAlign(),
     );
   }
 

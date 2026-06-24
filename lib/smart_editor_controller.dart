@@ -52,7 +52,17 @@ class SmartEditorController extends ChangeNotifier {
   final UndoRedoManager _undoRedoManager = UndoRedoManager();
   late final DocumentController _documentController;
   final SmartHtmlSerializer _serializer = SmartHtmlSerializer();
-  final SmartHtmlParser _parser = SmartHtmlParser();
+
+  /// Auto-convert bare URLs into links when parsing input HTML / plain text.
+  /// Set by [SmartEditor] from `SmartEditorSettings.autoDetectLinks`.
+  bool autoDetectLinks = true;
+
+  /// Whether serialized `<a>` tags get `target="_blank" rel="noopener noreferrer"`.
+  /// Set by [SmartEditor] from `SmartEditorSettings.linkTargetBlank`.
+  bool linkTargetBlank = true;
+
+  SmartHtmlParser get _parser =>
+      SmartHtmlParser(autoDetectLinks: autoDetectLinks);
 
   Timer? _clipboardTimer;
 
@@ -105,6 +115,7 @@ class SmartEditorController extends ChangeNotifier {
   /// Gets the HTML content from the editor.
   Future<String> getText() async {
     _serializer.onTagSerialize = onTagSerialize;
+    _serializer.linkTargetBlank = linkTargetBlank;
     var html = _serializer.serialize(_documentController.document);
 
     if (processOutputHtml) {
@@ -346,10 +357,18 @@ class SmartEditorController extends ChangeNotifier {
   }
 
   Future<void> _updatePasteState() async {
-    final reader = await SystemClipboard.instance?.read();
-    final hasContent = reader != null &&
-        (reader.canProvide(Formats.htmlText) ||
-            reader.canProvide(Formats.plainText));
+    bool hasContent;
+    try {
+      final reader = await SystemClipboard.instance?.read();
+      hasContent = reader != null &&
+          (reader.canProvide(Formats.htmlText) ||
+              reader.canProvide(Formats.plainText));
+    } catch (_) {
+      // The clipboard channel can be unavailable (unit tests, or platforms
+      // without the native plugin). Treat that as nothing pasteable instead
+      // of letting the error escape and crash the polling timer.
+      hasContent = false;
+    }
 
     if (hasContent != _canPaste) {
       _canPaste = hasContent;

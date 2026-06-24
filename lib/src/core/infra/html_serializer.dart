@@ -7,7 +7,11 @@ import '../../models/enums.dart';
 /// Produces clean, minimal HTML by merging inline formatting tags
 /// and only outputting attributes when they differ from defaults.
 class SmartHtmlSerializer {
-  SmartHtmlSerializer({this.onTagSerialize});
+  SmartHtmlSerializer({this.onTagSerialize, this.linkTargetBlank = true});
+
+  /// When true, serialized `<a>` tags get `target="_blank"` and
+  /// `rel="noopener noreferrer"` so links open in a new tab in a browser.
+  bool linkTargetBlank;
 
   /// Custom tag serialization callback.
   String? Function(
@@ -363,10 +367,15 @@ class SmartHtmlSerializer {
 
     // 6. Link wrapping (outermost)
     if (span.linkUrl != null && span.linkUrl!.isNotEmpty) {
+      final attrs = <String, String>{'href': span.linkUrl!};
+      if (linkTargetBlank) {
+        attrs['target'] = '_blank';
+        attrs['rel'] = 'noopener noreferrer';
+      }
       content = _wrapTag(
         SmartTagType.link,
         'a',
-        {'href': span.linkUrl!},
+        attrs,
         {},
         content,
       );

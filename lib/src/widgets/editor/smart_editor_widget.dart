@@ -152,6 +152,7 @@ class SmartEditorWidgetState extends State<SmartEditorWidget> {
 
   /// Notifies the content change callback
   void _notifyContentChanged() {
+    _serializer.linkTargetBlank = widget.editorSettings.linkTargetBlank;
     final html = _serializer.serialize(_document);
     widget.editorSettings.onChangeContent?.call(html);
   }
@@ -472,7 +473,8 @@ class SmartEditorWidgetState extends State<SmartEditorWidget> {
       if (reader != null && reader.canProvide(Formats.htmlText)) {
         final html = await reader.readValue(Formats.htmlText);
         if (html != null && html.isNotEmpty) {
-          final parser = SmartHtmlParser();
+          final parser = SmartHtmlParser(
+              autoDetectLinks: widget.editorSettings.autoDetectLinks);
           final parsed = parser.parse(html);
           if (parsed.blocks.isNotEmpty) {
             _docController.insertParsedDocument(
@@ -497,7 +499,8 @@ class SmartEditorWidgetState extends State<SmartEditorWidget> {
           final isLikelyHtml =
               RegExp(r'<[a-z][\s\S]*>', caseSensitive: false).hasMatch(text);
           if (widget.editorSettings.processInputHtml && isLikelyHtml) {
-            final parser = SmartHtmlParser();
+            final parser = SmartHtmlParser(
+                autoDetectLinks: widget.editorSettings.autoDetectLinks);
             final parsed = parser.parse(text);
             if (parsed.blocks.isNotEmpty) {
               _docController.insertParsedDocument(
@@ -513,14 +516,21 @@ class SmartEditorWidgetState extends State<SmartEditorWidget> {
             }
           }
 
-          _docController.insertText(
-            blockIndex,
-            _blockKeys[_document.blocks[blockIndex].id]
-                    ?.currentState
-                    ?.cursorOffset ??
-                0,
-            text,
-          );
+          final offset = _blockKeys[_document.blocks[blockIndex].id]
+                  ?.currentState
+                  ?.cursorOffset ??
+              0;
+
+          // Hijack pasted bare URLs into link spans (so they serialize to <a>
+          // and render clickable read-only), unless detection is disabled.
+          if (widget.editorSettings.autoDetectLinks &&
+              SmartHtmlParser.containsUrl(text)) {
+            final parsed =
+                SmartHtmlParser(autoDetectLinks: true).parsePlainText(text);
+            _docController.insertParsedDocument(blockIndex, offset, parsed);
+          } else {
+            _docController.insertText(blockIndex, offset, text);
+          }
           rebuild();
         }
       }

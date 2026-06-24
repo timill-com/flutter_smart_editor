@@ -54,7 +54,8 @@ class _SmartEditorState extends State<SmartEditor> {
       GlobalKey<SmartEditorWidgetState>();
   final GlobalKey<SmartToolbarState> _toolbarKey =
       GlobalKey<SmartToolbarState>();
-  final SmartHtmlParser _parser = SmartHtmlParser();
+  late final SmartHtmlParser _parser =
+      SmartHtmlParser(autoDetectLinks: widget.editorSettings.autoDetectLinks);
 
   @override
   void initState() {
@@ -83,6 +84,8 @@ class _SmartEditorState extends State<SmartEditor> {
     });
 
     widget.controller.onTagSerialize = widget.editorSettings.onTagSerialize;
+    widget.controller.autoDetectLinks = widget.editorSettings.autoDetectLinks;
+    widget.controller.linkTargetBlank = widget.editorSettings.linkTargetBlank;
   }
 
   @override
@@ -91,6 +94,16 @@ class _SmartEditorState extends State<SmartEditor> {
     if (widget.editorSettings.onTagSerialize !=
         oldWidget.editorSettings.onTagSerialize) {
       widget.controller.onTagSerialize = widget.editorSettings.onTagSerialize;
+    }
+    if (widget.editorSettings.autoDetectLinks !=
+        oldWidget.editorSettings.autoDetectLinks) {
+      widget.controller.autoDetectLinks =
+          widget.editorSettings.autoDetectLinks;
+    }
+    if (widget.editorSettings.linkTargetBlank !=
+        oldWidget.editorSettings.linkTargetBlank) {
+      widget.controller.linkTargetBlank =
+          widget.editorSettings.linkTargetBlank;
     }
   }
 

@@ -111,14 +111,36 @@ void main() {
       expect(html, '<p>a &lt; b &amp; c &gt; d</p>');
     });
 
-    test('serializes link', () {
+    test('serializes link with target=_blank by default', () {
       final doc = Document(blocks: [
         ParagraphNode(spans: [
           TextFormatSpan(text: 'Google', linkUrl: 'https://google.com'),
         ]),
       ]);
       final html = serializer.serialize(doc);
+      expect(
+        html,
+        '<p><a href="https://google.com" target="_blank" '
+        'rel="noopener noreferrer">Google</a></p>',
+      );
+    });
+
+    test('serializes link without target when linkTargetBlank is false', () {
+      final doc = Document(blocks: [
+        ParagraphNode(spans: [
+          TextFormatSpan(text: 'Google', linkUrl: 'https://google.com'),
+        ]),
+      ]);
+      final plainSerializer = SmartHtmlSerializer(linkTargetBlank: false);
+      final html = plainSerializer.serialize(doc);
       expect(html, '<p><a href="https://google.com">Google</a></p>');
+    });
+
+    test('promotes a bare URL to an <a> tag on round-trip', () {
+      final doc = parser.parse('<p>https://x.com</p>');
+      final plainSerializer = SmartHtmlSerializer(linkTargetBlank: false);
+      expect(plainSerializer.serialize(doc),
+          '<p><a href="https://x.com">https://x.com</a></p>');
     });
   });
 

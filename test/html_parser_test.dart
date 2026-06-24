@@ -122,4 +122,80 @@ void main() {
       expect(doc.blocks[0].plainText, 'Just some text');
     });
   });
+
+  group('SmartHtmlParser - URL auto-detection', () {
+    test('detects a bare https URL mid-sentence', () {
+      final doc = parser.parse('<p>see https://x.com now</p>');
+      final spans = doc.blocks[0].spans;
+      expect(spans.length, 3);
+      expect(spans[0].text, 'see ');
+      expect(spans[0].linkUrl, isNull);
+      expect(spans[1].text, 'https://x.com');
+      expect(spans[1].linkUrl, 'https://x.com');
+      expect(spans[2].text, ' now');
+      expect(spans[2].linkUrl, isNull);
+    });
+
+    test('injects https scheme for www. URLs', () {
+      final doc = parser.parse('<p>www.x.com</p>');
+      expect(doc.blocks[0].spans[0].text, 'www.x.com');
+      expect(doc.blocks[0].spans[0].linkUrl, 'https://www.x.com');
+    });
+
+    test('trims trailing sentence punctuation', () {
+      final doc = parser.parse('<p>see https://x.com.</p>');
+      final spans = doc.blocks[0].spans;
+      expect(spans[1].text, 'https://x.com');
+      expect(spans[1].linkUrl, 'https://x.com');
+      expect(spans.last.text, '.');
+      expect(spans.last.linkUrl, isNull);
+    });
+
+    test('excludes a closing parenthesis around the URL', () {
+      final doc = parser.parse('<p>(https://x.com)</p>');
+      final link = doc.blocks[0].spans.firstWhere((s) => s.linkUrl != null);
+      expect(link.text, 'https://x.com');
+      expect(link.linkUrl, 'https://x.com');
+    });
+
+    test('does not double-wrap an explicit <a> link', () {
+      final doc = parser.parse('<p><a href="https://x.com">x</a></p>');
+      final spans = doc.blocks[0].spans;
+      expect(spans.length, 1);
+      expect(spans[0].text, 'x');
+      expect(spans[0].linkUrl, 'https://x.com');
+    });
+
+    test('preserves formatting on an auto-detected link', () {
+      final doc = parser.parse('<p><b>https://x.com</b></p>');
+      final span = doc.blocks[0].spans[0];
+      expect(span.linkUrl, 'https://x.com');
+      expect(span.isBold, true);
+    });
+
+    test('does nothing when autoDetectLinks is false', () {
+      final off = SmartHtmlParser(autoDetectLinks: false);
+      final doc = off.parse('<p>https://x.com</p>');
+      expect(doc.blocks[0].spans.length, 1);
+      expect(doc.blocks[0].spans[0].linkUrl, isNull);
+    });
+
+    test('containsUrl detects presence', () {
+      expect(SmartHtmlParser.containsUrl('go to https://x.com'), true);
+      expect(SmartHtmlParser.containsUrl('no links here'), false);
+    });
+
+    test('parsePlainText autolinks bare URLs', () {
+      final doc = parser.parsePlainText('see https://x.com');
+      final link = doc.blocks[0].spans.firstWhere((s) => s.linkUrl != null);
+      expect(link.linkUrl, 'https://x.com');
+    });
+
+    test('parsePlainText leaves text plain when detection is off', () {
+      final off = SmartHtmlParser(autoDetectLinks: false);
+      final doc = off.parsePlainText('https://x.com');
+      expect(doc.blocks[0].spans.length, 1);
+      expect(doc.blocks[0].spans[0].linkUrl, isNull);
+    });
+  });
 }
