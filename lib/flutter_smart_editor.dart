@@ -16,6 +16,7 @@ export 'src/models/toolbar_settings.dart';
 export 'src/core/document/document.dart';
 export 'src/models/nodes/node_index.dart';
 export 'src/models/image_size.dart';
+export 'src/models/image_render.dart';
 
 // enums
 export 'src/models/enums.dart';

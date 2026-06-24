@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'enums.dart';
+import 'image_render.dart';
+import 'nodes/node_index.dart';
 
 /// Comprehensive settings for the editor's behavior, style, and events.
 ///
@@ -78,6 +80,13 @@ class SmartEditorSettings {
 
     // Tables
     this.tableStyle = const SmartTableStyle(),
+
+    // Images
+    this.imageFormatHandlers = const [],
+    this.imageProvider,
+    this.onImageTap,
+    this.onImageError,
+    this.maxImageWidth,
   });
 
   // ─── Core & HTML ──────────────────────────────────────────────
@@ -276,6 +285,35 @@ class SmartEditorSettings {
 
   /// Styling configuration for table blocks.
   final SmartTableStyle tableStyle;
+
+  // ─── Images ────────────────────────────────────────────────
+
+  /// Ordered list of pluggable renderers for formats Flutter's `dart:ui`
+  /// decoder can't handle (AVIF, SVG, Lottie, …). The first handler whose
+  /// `matches(ctx)` is true renders the image; an empty list (default) means
+  /// only the built-in formats (JPEG/PNG/WebP/GIF/BMP) are supported.
+  ///
+  /// This is the declarative "enable a format" API — see the README "Enabling
+  /// AVIF / SVG" recipes. The package never bundles a codec, so the handler
+  /// (and its dependency, e.g. `flutter_avif`/`flutter_svg`) lives in app code.
+  final List<ImageFormatHandler> imageFormatHandlers;
+
+  /// Host override mapping a stored image to a Flutter [ImageProvider] — for
+  /// formats Flutter *can* decode but loaded differently (auth'd / cached /
+  /// file / asset, e.g. `CachedNetworkImageProvider`). Return null to fall
+  /// through to the built-in resolver. Consulted after [imageFormatHandlers].
+  final ImageProvider? Function(ImageRenderContext context)? imageProvider;
+
+  /// Called when a rendered image is tapped (read-only and edit). Null = inert.
+  final void Function(ImageNode node)? onImageTap;
+
+  /// Notified when an image fails to load (broken URL, malformed base64). The
+  /// UI falls back to a placeholder regardless.
+  final void Function(ImageNode node, Object error)? onImageError;
+
+  /// Clamp for rendered display width in px, independent of the stored size.
+  /// Null = no clamp.
+  final double? maxImageWidth;
 }
 
 /// Styling configuration for the `<hr>` horizontal rule block.

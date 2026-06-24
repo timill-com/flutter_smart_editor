@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -5,6 +6,8 @@ import 'package:flutter/services.dart';
 import '../../core/document/document.dart';
 import '../../models/enums.dart';
 import '../../models/editor_settings.dart';
+import '../../models/image_render.dart';
+import '../../models/image_size.dart';
 import 'rich_text_controller.dart';
 import 'list_indicator.dart';
 
@@ -315,6 +318,10 @@ class BlockWidgetState extends State<BlockWidget> {
   Widget build(BuildContext context) {
     if (widget.block is HorizontalRuleNode) {
       return _buildHrWidget(context);
+    }
+
+    if (widget.block is ImageNode) {
+      return _buildImageWidget(context);
     }
 
     final defaultColor = widget.isDarkMode ? Colors.white : Colors.black;
@@ -656,6 +663,217 @@ class BlockWidgetState extends State<BlockWidget> {
         Expanded(child: divider),
       ],
     );
+  }
+
+  // ─── Image rendering ──────────────────────────────────────────
+
+  /// Renders an [ImageNode] in both edit and read-only mode. The package owns
+  /// the chrome (sizing, alignment, tap, error placeholder); the actual pixels
+  /// come from the resolution ladder in [_resolveImageWidget].
+  Widget _buildImageWidget(BuildContext context) {
+    final node = widget.block as ImageNode;
+    final decoded = node.isDataUri ? _decodeDataUri(node.src) : null;
+
+    // A data: URI that won't decode is a load failure — notify once, after the
+    // frame so we don't call back into the host during build.
+    if (node.isDataUri && decoded == null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _notifyImageError(node, const FormatException('Invalid data URI')),
+      );
+    }
+
+    final sized = LayoutBuilder(
+      builder: (context, constraints) {
+        final maxAvail =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : null;
+        var width = _resolveDimension(node.width, maxAvail);
+        final height = _resolveDimension(node.height, maxAvail);
+
+        final maxImg = widget.editorSettings.maxImageWidth;
+        if (width != null && maxImg != null && width > maxImg) width = maxImg;
+
+        final ctx = ImageRenderContext(
+          node: node,
+          src: node.src,
+          bytes: decoded?.bytes,
+          rawSvg: node.rawSvg,
+          mimeType: decoded?.mime,
+          width: width,
+          height: height,
+          fit: BoxFit.contain,
+          readOnly: widget.readOnly,
+        );
+
+        Widget img = _resolveImageWidget(ctx);
+        // Intrinsic width but a global clamp set → cap without forcing a size.
+        if (width == null && maxImg != null) {
+          img = ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxImg),
+            child: img,
+          );
+        }
+        return img;
+      },
+    );
+
+    final onTap = widget.editorSettings.onImageTap;
+    Widget result = sized;
+    if (onTap != null) {
+      result = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onTap(node),
+        child: result,
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Align(
+        alignment: _imageAlignment(node.alignment),
+        child: result,
+      ),
+    );
+  }
+
+  /// The resolution ladder (shared by edit + read-only):
+  /// 1. first matching [ImageFormatHandler] (AVIF/SVG/…),
+  /// 2. host [SmartEditorSettings.imageProvider],
+  /// 3. built-in: decoded `data:` bytes → memory, `http(s)` → network,
+  /// 4. error placeholder.
+  Widget _resolveImageWidget(ImageRenderContext ctx) {
+    for (final handler in widget.editorSettings.imageFormatHandlers) {
+      if (handler.matches(ctx)) return handler.build(ctx);
+    }
+
+    final providerHook = widget.editorSettings.imageProvider;
+    if (providerHook != null) {
+      final provider = providerHook(ctx);
+      if (provider != null) return _imageFromProvider(ctx, provider);
+    }
+
+    if (ctx.bytes != null) {
+      return _imageFromProvider(ctx, MemoryImage(ctx.bytes!));
+    }
+    if (ctx.src.startsWith('http://') || ctx.src.startsWith('https://')) {
+      return _imageFromProvider(ctx, NetworkImage(ctx.src));
+    }
+    return _errorPlaceholder(ctx);
+  }
+
+  Widget _imageFromProvider(ImageRenderContext ctx, ImageProvider provider) {
+    return Image(
+      image: provider,
+      width: ctx.width,
+      height: ctx.height,
+      fit: ctx.fit,
+      errorBuilder: (context, error, stack) {
+        _notifyImageError(ctx.node, error);
+        return _errorPlaceholder(ctx);
+      },
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child;
+        return _loadingPlaceholder(ctx);
+      },
+    );
+  }
+
+  /// A bordered placeholder shown when an image can't be decoded/loaded,
+  /// surfacing the `alt` text.
+  Widget _errorPlaceholder(ImageRenderContext ctx) {
+    final isDark = widget.isDarkMode;
+    final border = isDark ? Colors.white24 : Colors.black26;
+    final fg = isDark ? Colors.white54 : Colors.black45;
+    final alt = ctx.node.alt;
+    return Container(
+      width: ctx.width,
+      height: ctx.height,
+      constraints: const BoxConstraints(minWidth: 80, minHeight: 60),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        border: Border.all(color: border),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.broken_image_outlined, size: 20, color: fg),
+          if (alt.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                alt,
+                style: TextStyle(color: fg, fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _loadingPlaceholder(ImageRenderContext ctx) {
+    return SizedBox(
+      width: ctx.width,
+      height: ctx.height ?? 80,
+      child: const Center(
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
+  }
+
+  void _notifyImageError(ImageNode node, Object error) {
+    widget.editorSettings.onImageError?.call(node, error);
+  }
+
+  Alignment _imageAlignment(SmartTextAlign align) {
+    switch (align) {
+      case SmartTextAlign.center:
+        return Alignment.center;
+      case SmartTextAlign.right:
+        return Alignment.centerRight;
+      case SmartTextAlign.left:
+      case SmartTextAlign.justify:
+        return Alignment.centerLeft;
+    }
+  }
+
+  /// Resolves an [ImageSize] to px against [pctBase] (the available width).
+  /// `auto`/null → null (intrinsic).
+  double? _resolveDimension(ImageSize? size, double? pctBase) {
+    if (size == null) return null;
+    switch (size.unit) {
+      case ImageSizeUnit.px:
+        return size.value;
+      case ImageSizeUnit.percent:
+        if (pctBase == null) return null;
+        return pctBase * (size.value! / 100.0);
+      case ImageSizeUnit.auto:
+        return null;
+    }
+  }
+
+  /// Decodes a `data:` URI into bytes + MIME. Handles base64 and percent-encoded
+  /// payloads; returns null on malformed input (→ error placeholder).
+  ({Uint8List bytes, String? mime})? _decodeDataUri(String src) {
+    try {
+      final comma = src.indexOf(',');
+      if (comma < 0) return null;
+      final header = src.substring(5, comma); // strip leading 'data:'
+      final payload = src.substring(comma + 1);
+      final isBase64 = header.toLowerCase().contains(';base64');
+      final mime = header.split(';').first.trim();
+      final bytes = isBase64
+          ? base64.decode(payload.trim())
+          : Uint8List.fromList(utf8.encode(Uri.decodeComponent(payload)));
+      return (bytes: bytes, mime: mime.isEmpty ? null : mime);
+    } catch (_) {
+      return null;
+    }
   }
 }
 
