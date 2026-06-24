@@ -65,6 +65,7 @@ class SmartEditorSettings {
 
     // Links
     this.onLinkTap,
+    this.onLinkLongPress,
     this.linkStyle,
     this.autoDetectLinks = true,
     this.linkTargetBlank = true,
@@ -233,6 +234,12 @@ class SmartEditorSettings {
   /// mode. Taps inside the editable editor never fire (Flutter's `EditableText`
   /// consumes pointer events), so this only applies when `readOnly` is true.
   final void Function(String url)? onLinkTap;
+
+  /// Called with the `href` when a link span is long-pressed in read-only mode.
+  /// The url is always copied to the clipboard first; if this callback is null,
+  /// a default "Link copied" SnackBar is shown (when a [ScaffoldMessenger] is
+  /// available). Provide this to show your own toast/feedback instead.
+  final void Function(String url)? onLinkLongPress;
 
   /// Optional style for link spans, merged over the default link appearance
   /// (blue `#1A73E8` + underline). Applies in both edit and read-only modes.

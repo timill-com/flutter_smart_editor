@@ -50,7 +50,7 @@ A highly customizable, **pure Dart and Flutter** rich text HTML editor. No WebVi
 - **Rich Colors**: Foreground (text) and Highlight (background) color pickers.
 - **Block Types**: Paragraphs and Headings (H1–H6).
 - **Alignment**: Left, Center, Right, and Justify.
-- **Smart Links**: Auto-detects bare URLs (no `<a>` needed), renders them tappable in read-only mode, and serializes `target="_blank"` by default. All toggleable.
+- **Smart Links**: Auto-detects bare URLs (no `<a>` needed), renders them tappable in read-only mode (long-press to copy), and serializes `target="_blank"` by default. All toggleable.
 
 ### 🧩 Core Editor Capabilities
 
@@ -171,6 +171,7 @@ SmartEditor(
 | --- | --- | --- | --- |
 | `autoDetectLinks` | `bool` | `true` | Auto-converts bare `http(s)://` / `www.` URLs into links on load, `setText`, `insertHtml`, and paste. Set `false` to honour only explicit `<a>` tags. |
 | `onLinkTap` | `void Function(String url)?` | `null` | Called with the `href` when a link is tapped in **read-only** mode. `null` = links are styled but inert. (Taps never fire inside the editable editor — a Flutter limitation.) |
+| `onLinkLongPress` | `void Function(String url)?` | `null` | Called when a link is **long-pressed** in read-only mode. The url is always copied to the clipboard first; if this is `null`, a default "Link copied" SnackBar is shown. Provide it to show your own toast/feedback. |
 | `linkStyle` | `TextStyle?` | `null` | Style merged over the default link appearance (blue `#1A73E8` + underline). Applies in both edit and read-only modes. |
 | `linkTargetBlank` | `bool` | `true` | When `true`, serialized `<a>` tags get `target="_blank" rel="noopener noreferrer"`. Set `false` to omit both. |
 
@@ -186,6 +187,7 @@ SmartEditor(
 | `onChangeSelection` | `(Map<String, dynamic>)` | Triggered when cursor moves; provides active formatting state. |
 | `onPaste` | `()` | Triggered when content is pasted into the editor. |
 | `onLinkTap` | `(String url)` | Triggered when a link is tapped in read-only mode (see [Links & URL Detection](#-links--url-detection)). |
+| `onLinkLongPress` | `(String url)` | Triggered when a link is long-pressed in read-only mode (the url is copied first). |
 | `onTagSerialize` | `(Type, Tag, Attr, Styles, Content)` | Custom tag serialization interceptor (see below). |
 | `onKeyUp` / `onKeyDown` | `(String? key)` | Raw key event callbacks. |
 
@@ -283,6 +285,22 @@ SmartEditor(
 ```
 
 > **Note:** taps only fire in **read-only** mode. Inside the editable editor, Flutter's `EditableText` consumes pointer events, so links there are styled but not tappable — the standard behavior for rich-text editors.
+
+#### Long-press to copy
+
+Long-pressing a link in read-only mode **copies its URL to the clipboard**. By default a small "Link copied" SnackBar is shown (when a `ScaffoldMessenger` is in the tree). Provide `onLinkLongPress` to show your own feedback instead — e.g. a native OS toast:
+
+```dart
+SmartEditorSettings(
+  readOnly: true,
+  onLinkLongPress: (url) {
+    // The url has already been copied to the clipboard.
+    Fluttertoast.showToast(msg: 'Link copied'); // your own toast
+  },
+)
+```
+
+> **Selection trade-off:** a Flutter `TextSpan` supports only one gesture recognizer, so a link can't carry both tap and long-press at the span level. Blocks **containing a link** are therefore rendered as non-selectable rich text (tap opens, long-press copies); link-free blocks remain fully drag-selectable.
 
 #### Styling and `target="_blank"`
 

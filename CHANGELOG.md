@@ -6,6 +6,7 @@
 
 - **URL Auto-Detection**: Bare `http(s)://` / `www.` URLs are converted into links automatically on load, `setText`, `insertHtml`, and **paste** — no `<a>` tag required. Toggle with `autoDetectLinks` (default `true`).
 - **Clickable Read-Only Links**: Read-only blocks now render with a non-editable rich-text widget so link spans are tappable. Provide `SmartEditorSettings.onLinkTap` to handle taps. Links are styled blue + underline in both edit and read-only modes; customize via `linkStyle`.
+- **Long-Press to Copy**: Long-pressing a link in read-only mode copies its URL to the clipboard and shows a default "Link copied" SnackBar. Provide `onLinkLongPress` to supply your own feedback (e.g. a native toast). Blocks containing a link render as non-selectable rich text; link-free blocks remain drag-selectable.
 - **`target="_blank"` Output**: Serialized `<a>` tags get `target="_blank" rel="noopener noreferrer"` by default. Toggle with `linkTargetBlank`.
 
 ### 🛠️ Bug Fixes

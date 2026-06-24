@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import '../../core/document/document.dart';
 import '../../models/enums.dart';
@@ -90,6 +91,10 @@ class BlockWidgetState extends State<BlockWidget> {
   /// Tap recognizers for link spans in read-only mode. Rebuilt on each render
   /// and disposed to avoid leaks.
   final List<TapGestureRecognizer> _linkRecognizers = [];
+
+  /// Key on the read-only rich text, used to hit-test long-press positions
+  /// against the rendered paragraph so we know which link was pressed.
+  final GlobalKey _readOnlyTextKey = GlobalKey();
 
   @override
   void initState() {
@@ -480,14 +485,21 @@ class BlockWidgetState extends State<BlockWidget> {
     final baseWeight = _getFontWeight();
     final onLinkTap = widget.editorSettings.onLinkTap;
 
+    var hasLink = false;
     final children = <InlineSpan>[];
     for (final span in widget.block.spans) {
       final isLink = span.linkUrl != null && span.linkUrl!.isNotEmpty;
       TapGestureRecognizer? recognizer;
-      if (isLink && onLinkTap != null) {
-        final url = span.linkUrl!;
-        recognizer = TapGestureRecognizer()..onTap = () => onLinkTap(url);
-        _linkRecognizers.add(recognizer);
+      if (isLink) {
+        hasLink = true;
+        // Tap-to-open is a span recognizer (also exposes link a11y semantics).
+        // Long-press-to-copy is handled by the wrapping GestureDetector below,
+        // because a TextSpan supports only one recognizer.
+        if (onLinkTap != null) {
+          final url = span.linkUrl!;
+          recognizer = TapGestureRecognizer()..onTap = () => onLinkTap(url);
+          _linkRecognizers.add(recognizer);
+        }
       }
       children.add(TextSpan(
         text: span.text,
@@ -502,13 +514,71 @@ class BlockWidgetState extends State<BlockWidget> {
       ));
     }
 
-    return SelectableText.rich(
-      TextSpan(
-        style:
-            _getTextStyle(widget.editorSettings.defaultFontSize, defaultColor),
-        children: children,
+    final root = TextSpan(
+      style: _getTextStyle(widget.editorSettings.defaultFontSize, defaultColor),
+      children: children,
+    );
+
+    // Link-free blocks stay drag-selectable. Link-bearing blocks use a plain
+    // rich text we can hit-test, so a long press anywhere on a link copies it
+    // (a TextSpan supports only one recognizer, so long-press can't also be a
+    // span recognizer alongside the tap one).
+    if (!hasLink) {
+      return SelectableText.rich(root, textAlign: _getTextAlign());
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onLongPressStart: (details) =>
+          _handleLinkLongPressAt(details.globalPosition),
+      child: Text.rich(root, key: _readOnlyTextKey, textAlign: _getTextAlign()),
+    );
+  }
+
+  /// Hit-tests a long-press position against the rendered paragraph and, if it
+  /// landed on a link span, copies it.
+  void _handleLinkLongPressAt(Offset globalPosition) {
+    final renderObject = _readOnlyTextKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderParagraph) return;
+    final local = renderObject.globalToLocal(globalPosition);
+    final offset = renderObject.getPositionForOffset(local).offset;
+    final url = _linkUrlAtOffset(offset);
+    if (url != null) _handleLinkLongPress(url);
+  }
+
+  /// Returns the `linkUrl` of the span containing the given text [offset], or
+  /// null if that position isn't part of a link.
+  String? _linkUrlAtOffset(int offset) {
+    var cursor = 0;
+    for (final span in widget.block.spans) {
+      final len = span.text.length;
+      if (offset >= cursor && offset < cursor + len) {
+        return (span.linkUrl?.isNotEmpty ?? false) ? span.linkUrl : null;
+      }
+      cursor += len;
+    }
+    return null;
+  }
+
+  /// Copies a long-pressed link to the clipboard, then either invokes the
+  /// host's [SmartEditorSettings.onLinkLongPress] callback or shows a default
+  /// "Link copied" SnackBar when a [ScaffoldMessenger] is available.
+  void _handleLinkLongPress(String url) {
+    Clipboard.setData(ClipboardData(text: url));
+
+    final onLongPress = widget.editorSettings.onLinkLongPress;
+    if (onLongPress != null) {
+      onLongPress(url);
+      return;
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+        content: Text('Link copied'),
+        duration: Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
       ),
-      textAlign: _getTextAlign(),
     );
   }
 
@@ -588,3 +658,4 @@ class BlockWidgetState extends State<BlockWidget> {
     );
   }
 }
+
