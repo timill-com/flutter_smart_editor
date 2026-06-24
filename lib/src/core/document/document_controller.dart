@@ -680,6 +680,9 @@ class DocumentController extends ChangeNotifier {
       case BlockType.table:
         // Tables cannot be converted to/from other block types
         return;
+      case BlockType.image:
+        // Images aren't a text-style target — can't convert text into one.
+        return;
     }
 
     document.blocks[blockIndex] = newBlock;
@@ -1117,6 +1120,9 @@ class DocumentController extends ChangeNotifier {
         return;
       case BlockType.table:
         // Tables cannot be nested
+        return;
+      case BlockType.image:
+        // Images aren't supported inside table cells
         return;
     }
 

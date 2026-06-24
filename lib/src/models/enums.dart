@@ -48,6 +48,7 @@ enum SmartButtonType {
   bulletList,
   orderedList,
   horizontalRule,
+  insertImage,
 
   // Table operations
   insertTable,
@@ -86,6 +87,7 @@ enum BlockType {
   orderedList,
   horizontalRule,
   table,
+  image,
 }
 
 /// The type of list for a list item
@@ -211,4 +213,7 @@ enum SmartTagType {
 
   /// A table header cell (<th>)
   tableHeaderCell,
+
+  /// An image (<img>)
+  image,
 }
