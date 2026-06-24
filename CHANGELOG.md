@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### 🚀 Features
+
+- **URL Auto-Detection**: Bare `http(s)://` / `www.` URLs are converted into links automatically on load, `setText`, `insertHtml`, and **paste** — no `<a>` tag required. Toggle with `autoDetectLinks` (default `true`).
+- **Clickable Read-Only Links**: Read-only blocks now render with a non-editable rich-text widget so link spans are tappable. Provide `SmartEditorSettings.onLinkTap` to handle taps. Links are styled blue + underline in both edit and read-only modes; customize via `linkStyle`.
+- **`target="_blank"` Output**: Serialized `<a>` tags get `target="_blank" rel="noopener noreferrer"` by default. Toggle with `linkTargetBlank`.
+
+### 🛠️ Bug Fixes
+
+- **Resilient Clipboard Polling**: `canPaste` state updates no longer throw when the native clipboard channel is unavailable (e.g. in widget tests or on platforms without the plugin).
+
 ## 2.1.0
 
 ### 🚀 Features

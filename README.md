@@ -20,7 +20,9 @@ A highly customizable, **pure Dart and Flutter** rich text HTML editor. No WebVi
     - [Selection & Cursor](#selection--cursor)
     - [Style & Decoration](#style--decoration)
     - [Lists & Horizontal Rules](#lists--horizontal-rules)
+    - [Links](#links)
     - [Callbacks](#callbacks)
+  - [🔗 Links & URL Detection](#-links--url-detection)
   - [2. SmartToolbarSettings](#2-smarttoolbarsettings)
     - [Layout & Position](#layout--position)
     - [Content](#content)
@@ -48,6 +50,7 @@ A highly customizable, **pure Dart and Flutter** rich text HTML editor. No WebVi
 - **Rich Colors**: Foreground (text) and Highlight (background) color pickers.
 - **Block Types**: Paragraphs and Headings (H1–H6).
 - **Alignment**: Left, Center, Right, and Justify.
+- **Smart Links**: Auto-detects bare URLs (no `<a>` needed), renders them tappable in read-only mode, and serializes `target="_blank"` by default. All toggleable.
 
 ### 🧩 Core Editor Capabilities
 
@@ -162,6 +165,15 @@ SmartEditor(
 | `hrStyle` | `SmartHrStyle` | `(defaults)` | Visual configuration for Horizontal Rule dividers. |
 | `draggableBlockTypes` | `Set<BlockType>` | `null` | Types of blocks that show reordering handles (e.g. `{BlockType.bulletList}`). |
 
+#### Links
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `autoDetectLinks` | `bool` | `true` | Auto-converts bare `http(s)://` / `www.` URLs into links on load, `setText`, `insertHtml`, and paste. Set `false` to honour only explicit `<a>` tags. |
+| `onLinkTap` | `void Function(String url)?` | `null` | Called with the `href` when a link is tapped in **read-only** mode. `null` = links are styled but inert. (Taps never fire inside the editable editor — a Flutter limitation.) |
+| `linkStyle` | `TextStyle?` | `null` | Style merged over the default link appearance (blue `#1A73E8` + underline). Applies in both edit and read-only modes. |
+| `linkTargetBlank` | `bool` | `true` | When `true`, serialized `<a>` tags get `target="_blank" rel="noopener noreferrer"`. Set `false` to omit both. |
+
 #### Callbacks
 
 | Callback | Signature | Description |
@@ -173,6 +185,7 @@ SmartEditor(
 | `onEnter` | `()` | Triggered when the Enter/Return key is pressed. |
 | `onChangeSelection` | `(Map<String, dynamic>)` | Triggered when cursor moves; provides active formatting state. |
 | `onPaste` | `()` | Triggered when content is pasted into the editor. |
+| `onLinkTap` | `(String url)` | Triggered when a link is tapped in read-only mode (see [Links & URL Detection](#-links--url-detection)). |
 | `onTagSerialize` | `(Type, Tag, Attr, Styles, Content)` | Custom tag serialization interceptor (see below). |
 | `onKeyUp` / `onKeyDown` | `(String? key)` | Raw key event callbacks. |
 
@@ -231,6 +244,57 @@ SmartEditorSettings(
     
     return null;
   },
+)
+```
+
+### 🔗 Links & URL Detection
+
+The editor understands links end-to-end — parsing, auto-detection, styling, clickable rendering, and serialization.
+
+#### Automatic detection
+
+With `autoDetectLinks` enabled (the default), bare URLs are turned into real links automatically — no `<a>` tag required:
+
+- `https://example.com` and `www.example.com` are recognised (the `www.` form gets an `https://` scheme in the `href`).
+- Detection runs on initial `initialText`, `setText`, `insertHtml`, **and on paste** — pasting a URL into the editor "promotes" it to a link.
+- Trailing sentence punctuation (`.`, `,`, `)`, …) is kept out of the link.
+- Text already inside an `<a>` is never double-wrapped.
+
+Because detected links live in the document model, they round-trip to `<a href="…">` on output. Set `autoDetectLinks: false` to honour only explicit `<a>` tags.
+
+#### Clickable links in read-only mode
+
+Links render blue + underlined in both edit and read-only modes. They become **tappable in read-only mode** — provide an `onLinkTap` callback to handle the tap (open a browser, route in-app, etc.):
+
+```dart
+SmartEditor(
+  controller: controller,
+  editorSettings: SmartEditorSettings(
+    readOnly: true,
+    initialText: '<p>Visit https://flutter.dev for docs.</p>',
+    onLinkTap: (url) async {
+      final uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri); // e.g. via the url_launcher package
+      }
+    },
+  ),
+)
+```
+
+> **Note:** taps only fire in **read-only** mode. Inside the editable editor, Flutter's `EditableText` consumes pointer events, so links there are styled but not tappable — the standard behavior for rich-text editors.
+
+#### Styling and `target="_blank"`
+
+```dart
+SmartEditorSettings(
+  // Customize link appearance (merged over the blue + underline default).
+  linkStyle: const TextStyle(color: Colors.deepPurple),
+
+  // Output <a> tags open in a new tab by default:
+  //   <a href="…" target="_blank" rel="noopener noreferrer">
+  // Set false for plain <a href="…">.
+  linkTargetBlank: true,
 )
 ```
 
@@ -442,7 +506,7 @@ SmartEditor(
 - [ ] **Find & Replace**: Native search overlay with match highlighting.
 - [ ] **Image Blocks**: Support for network/local images with resize handles.
 - [ ] **Code Blocks**: Syntax highlighting for 100+ languages.
-- [ ] **Hyperlinks**: Comprehensive link insertion and management dialogs.
+- [x] **Hyperlinks**: URL auto-detection, clickable read-only links, and `target="_blank"` output. _(Insertion/management dialogs still planned.)_
 - [ ] **Focus Mode**: Zen mode for distraction-free writing.
 - [ ] **Live Statistics**: Real-time word, character, and reading time counters.
 - [ ] **Auto-Save**: Background persistence and draft recovery.
