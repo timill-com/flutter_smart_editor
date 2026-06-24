@@ -170,6 +170,10 @@ class SmartHtmlSerializer {
     final styles = <String, String>{};
     if (b.width != null) styles['width'] = b.width!.toCss();
     if (b.height != null) styles['height'] = b.height!.toCss();
+    // Responsive cap (D-A6): always emitted so neither `%` nor `px` sizes
+    // overflow a narrower viewport on web or in-app. Round-trips cleanly —
+    // the parser matches the exact `width` key, so `max-width` is ignored.
+    styles['max-width'] = '100%';
     if (b.alignment == SmartTextAlign.center) {
       styles['display'] = 'block';
       styles['margin'] = '0 auto';

@@ -386,11 +386,16 @@ SmartEditorSettings(
 
 #### Sizing & resize
 
-Width/height support **px**, **%**, and `auto`, round-tripped through both the legacy `width="…"` attribute and CSS `style="width:…"` (CSS wins when both are present). In edit mode, a resize menu on each image offers **Original / 25% / 50% / 75% / 100% / custom px or %** (each change is one undo step).
+Width/height support **px**, **%**, and `auto`, round-tripped through both the legacy `width="…"` attribute and CSS `style="width:…"` (CSS wins when both are present). Edit mode gives you two ways to resize, both writing the same `ImageNode.width` (one undo step each):
+
+- **Resize menu** — a corner button on every editable image offers **Original / 25% / 50% / 75% / 100% / custom px or %**. The precision / keyboard-accessible path.
+- **Drag to resize** — **tap an image to select it** (a faint border + a bottom-right drag handle appear), then **drag the handle** to resize with a live preview; tap again to deselect. Width-only, so the image keeps its own aspect ratio.
+
+**Proportional by default + never overflows.** Drag-resize stores a **`%`** (proportion of the column), so an image looks the same — "half the column" — whether rendered in a narrow phone app or a wide desktop web view, snapping to `100%` near full width. On top of that, the serializer emits **`max-width: 100%`** on every `<img>`, so even px-sized images degrade gracefully and never overflow a narrower viewport. (`max-width` is ignored on re-parse, so output is idempotent.)
 
 ```dart
 SmartEditorSettings(
-  allowImageResize: true,                       // show the in-editor resize menu (default)
+  allowImageResize: true,                       // show the resize menu + drag handle (default)
   defaultImageWidth: const ImageSize.percent(100), // applied to inserts that declare no size
   maxImageWidth: 600,                           // clamp rendered display width (px)
 )
@@ -399,11 +404,19 @@ SmartEditorSettings(
 controller.resizeImage(blockIndex, width: const ImageSize.percent(50));
 ```
 
-Tap handling and load failures:
+#### Tap, long-press to preview, and load failures
+
+Tap-and-hold any rendered image (read-only **and** edit) to open a built-in full-screen **pinch-zoom / pan viewer** (a lightbox) with a `Hero` transition, dismissed by tap / swipe-down / system back / ✕. It renders through the same handler ladder, so AVIF/SVG/`imageProvider` images zoom too.
 
 ```dart
 SmartEditorSettings(
   onImageTap: (node) => print('tapped ${node.src}'),     // read-only and edit
+
+  enableImagePreview: true,        // long-press → built-in lightbox (default true)
+  imagePreviewMaxScale: 5.0,       // max zoom in the built-in viewer
+  // Fully override the built-in viewer (the haptic still fires first):
+  onImageLongPress: (node) => openMyOwnGallery(node),
+
   onImageError: (node, error) => log('image failed', error), // UI shows a placeholder regardless
 )
 ```
@@ -678,7 +691,7 @@ SmartEditor(
 
 - [ ] **Markdown Shortcuts**: Auto-format headers and lists during typing.
 - [ ] **Find & Replace**: Native search overlay with match highlighting.
-- [x] **Image Blocks**: Network/`data:`/pasted images, upload-swap hook, px/% resize menu, and a pluggable AVIF/SVG codec API. _(Freehand drag-resize handles still planned.)_
+- [x] **Image Blocks**: Network/`data:`/pasted images, upload-swap hook, px/% resize menu **plus freehand drag-resize**, a full-screen pinch-zoom preview viewer, and a pluggable AVIF/SVG codec API.
 - [ ] **Code Blocks**: Syntax highlighting for 100+ languages.
 - [x] **Hyperlinks**: URL auto-detection, clickable read-only links, and `target="_blank"` output. _(Insertion/management dialogs still planned.)_
 - [ ] **Focus Mode**: Zen mode for distraction-free writing.

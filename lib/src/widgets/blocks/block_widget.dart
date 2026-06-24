@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -8,6 +7,8 @@ import '../../models/enums.dart';
 import '../../models/editor_settings.dart';
 import '../../models/image_render.dart';
 import '../../models/image_size.dart';
+import 'image_resolver.dart';
+import 'image_preview_view.dart';
 import 'rich_text_controller.dart';
 import 'list_indicator.dart';
 
@@ -104,6 +105,26 @@ class BlockWidgetState extends State<BlockWidget> {
   /// Key on the read-only rich text, used to hit-test long-press positions
   /// against the rendered paragraph so we know which link was pressed.
   final GlobalKey _readOnlyTextKey = GlobalKey();
+
+  // ─── Image selection + drag-resize state ──────────────────────
+  /// Whether the image block is tap-selected (edit mode). When true the faint
+  /// selection border and the bottom-right drag handle are shown (D-A2).
+  bool _imageSelected = false;
+
+  /// Live drag width in px during a handle drag — a local preview only; the
+  /// model isn't mutated until pan-end, so one drag = one undo step (D-A4).
+  double? _dragWidthPx;
+
+  /// The container's available width captured during the last image layout,
+  /// used by the drag handler to clamp and to convert px → `%` (D-A6).
+  double? _lastImageMaxAvail;
+
+  /// Key on the rendered image box, so a drag can read its actual on-screen
+  /// width as the starting point (works for px/%/intrinsic alike).
+  final GlobalKey _imageBoxKey = GlobalKey();
+
+  /// Smallest width a drag may shrink an image to (px floor).
+  static const double _minImageWidth = 32.0;
 
   @override
   void initState() {
@@ -674,11 +695,11 @@ class BlockWidgetState extends State<BlockWidget> {
   // ─── Image rendering ──────────────────────────────────────────
 
   /// Renders an [ImageNode] in both edit and read-only mode. The package owns
-  /// the chrome (sizing, alignment, tap, error placeholder); the actual pixels
-  /// come from the resolution ladder in [_resolveImageWidget].
+  /// the chrome (sizing, alignment, tap, long-press preview, error placeholder);
+  /// the actual pixels come from the shared [resolveImageWidget] ladder.
   Widget _buildImageWidget(BuildContext context) {
     final node = widget.block as ImageNode;
-    final decoded = node.isDataUri ? _decodeDataUri(node.src) : null;
+    final decoded = node.isDataUri ? decodeImageDataUri(node.src) : null;
 
     // A data: URI that won't decode is a load failure — notify once, after the
     // frame so we don't call back into the host during build.
@@ -692,8 +713,13 @@ class BlockWidgetState extends State<BlockWidget> {
       builder: (context, constraints) {
         final maxAvail =
             constraints.maxWidth.isFinite ? constraints.maxWidth : null;
-        var width = _resolveDimension(node.width, maxAvail);
-        final height = _resolveDimension(node.height, maxAvail);
+        _lastImageMaxAvail = maxAvail;
+
+        // During a handle drag, the local px override drives the live preview
+        // (no model mutation); otherwise resolve the stored size (D-A4).
+        var width = _dragWidthPx ?? _resolveDimension(node.width, maxAvail);
+        final height =
+            _dragWidthPx != null ? null : _resolveDimension(node.height, maxAvail);
 
         final maxImg = widget.editorSettings.maxImageWidth;
         if (width != null && maxImg != null && width > maxImg) width = maxImg;
@@ -710,7 +736,12 @@ class BlockWidgetState extends State<BlockWidget> {
           readOnly: widget.readOnly,
         );
 
-        Widget img = _resolveImageWidget(ctx);
+        Widget img = resolveImageWidget(
+          settings: widget.editorSettings,
+          ctx: ctx,
+          isDarkMode: widget.isDarkMode,
+          onError: _notifyImageError,
+        );
         // Intrinsic width but a global clamp set → cap without forcing a size.
         if (width == null && maxImg != null) {
           img = ConstrainedBox(
@@ -718,30 +749,70 @@ class BlockWidgetState extends State<BlockWidget> {
             child: img,
           );
         }
-        return img;
+        return KeyedSubtree(key: _imageBoxKey, child: img);
       },
     );
 
     final onTap = widget.editorSettings.onImageTap;
-    Widget result = sized;
-    if (onTap != null) {
+    // Edit-mode resize affordance (menu + drag handle); needs a wired callback.
+    final canResize = !widget.readOnly &&
+        widget.editorSettings.allowImageResize &&
+        widget.onImageResize != null;
+    // Long-press preview is available whenever the host enabled the built-in
+    // viewer or supplied an override (D-B1).
+    final hasLongPress = widget.editorSettings.enableImagePreview ||
+        widget.editorSettings.onImageLongPress != null;
+
+    // Hero so the inline image flies into the full-screen preview (D-B2).
+    Widget result = Hero(tag: imagePreviewHeroTag(node), child: sized);
+
+    final wantsTap = onTap != null || canResize;
+    if (wantsTap || hasLongPress) {
       result = GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () => onTap(node),
+        // A tap fires the host's onImageTap (any mode) and, in editable+
+        // resizable mode, toggles selection so the drag handle appears (D-A2).
+        onTap: wantsTap
+            ? () {
+                onTap?.call(node);
+                if (canResize) {
+                  setState(() => _imageSelected = !_imageSelected);
+                }
+              }
+            : null,
+        // Long-press → haptic → host override or built-in lightbox (D-B1).
+        onLongPress: hasLongPress ? () => _handleImageLongPress(node) : null,
         child: result,
       );
     }
 
-    // Edit-mode resize affordance (menu-based px/%), overlaid top-right.
-    final canResize = !widget.readOnly &&
-        widget.editorSettings.allowImageResize &&
-        widget.onImageResize != null;
     if (canResize) {
+      final accent = Theme.of(context).colorScheme.primary;
       result = Stack(
         clipBehavior: Clip.none,
         children: [
           result,
+          // Faint selection border drawn over the image edges.
+          if (_imageSelected)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: accent, width: 1.5),
+                  ),
+                ),
+              ),
+            ),
           Positioned(top: 4, right: 4, child: _buildResizeMenu(node)),
+          // Bottom-right freehand drag handle, shown only while selected.
+          // Kept inside the Stack bounds so it reliably receives pointers
+          // (children positioned outside a parent aren't hit-tested).
+          if (_imageSelected)
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: _buildImageDragHandle(node, accent),
+            ),
         ],
       );
     }
@@ -780,6 +851,68 @@ class BlockWidgetState extends State<BlockWidget> {
     );
   }
 
+  /// The bottom-right freehand drag handle (D-A3). Dragging updates the local
+  /// [_dragWidthPx] for a live preview and commits a single resize on pan-end.
+  Widget _buildImageDragHandle(ImageNode node, Color accent) {
+    return MouseRegion(
+      key: const ValueKey('imageDragHandle'),
+      cursor: SystemMouseCursors.resizeDownRight,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: (_) {
+          final box = _imageBoxKey.currentContext?.findRenderObject();
+          final start = (box is RenderBox && box.hasSize)
+              ? box.size.width
+              : _resolveDimension(node.width, _lastImageMaxAvail) ??
+                  _minImageWidth;
+          setState(() => _dragWidthPx = start);
+        },
+        onPanUpdate: (details) {
+          final base = _dragWidthPx ?? _minImageWidth;
+          var w = base + details.delta.dx;
+          var ceil = _lastImageMaxAvail ?? double.infinity;
+          final maxImg = widget.editorSettings.maxImageWidth;
+          if (maxImg != null && maxImg < ceil) ceil = maxImg;
+          if (ceil < _minImageWidth) ceil = _minImageWidth;
+          w = w.clamp(_minImageWidth, ceil);
+          setState(() => _dragWidthPx = w);
+        },
+        onPanEnd: (_) {
+          final w = _dragWidthPx;
+          final maxAvail = _lastImageMaxAvail;
+          setState(() => _dragWidthPx = null);
+          if (w == null) return;
+          widget.onImageResize
+              ?.call(widget.blockIndex, _dragWidthToSize(w, maxAvail), null);
+        },
+        child: Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: accent,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2),
+          ),
+          child: const Icon(Icons.open_in_full, size: 11, color: Colors.white),
+        ),
+      ),
+    );
+  }
+
+  /// Converts a dragged display width to the size to store. Prefers `%` for
+  /// cross-platform proportional consistency (D-A6), snapping to 100% near the
+  /// full container width (D-A3); falls back to px only when the container
+  /// width is unknown.
+  ImageSize _dragWidthToSize(double widthPx, double? maxAvail) {
+    if (maxAvail == null || maxAvail <= 0) {
+      return ImageSize.px(widthPx.roundToDouble());
+    }
+    var pct = (widthPx / maxAvail * 100).round();
+    if (pct >= 97) pct = 100; // snap to full width
+    pct = pct.clamp(1, 100);
+    return ImageSize.percent(pct.toDouble());
+  }
+
   Future<void> _onResizeSelected(ImageNode node, String value) async {
     final cb = widget.onImageResize;
     if (cb == null) return;
@@ -799,95 +932,21 @@ class BlockWidgetState extends State<BlockWidget> {
     if (pct != null) cb(widget.blockIndex, ImageSize.percent(pct), null);
   }
 
-  /// The resolution ladder (shared by edit + read-only):
-  /// 1. first matching [ImageFormatHandler] (AVIF/SVG/…),
-  /// 2. host [SmartEditorSettings.imageProvider],
-  /// 3. built-in: decoded `data:` bytes → memory, `http(s)` → network,
-  /// 4. error placeholder.
-  Widget _resolveImageWidget(ImageRenderContext ctx) {
-    for (final handler in widget.editorSettings.imageFormatHandlers) {
-      if (handler.matches(ctx)) return handler.build(ctx);
+  /// Handles a long-press on a rendered image (D-B1): fires a medium haptic,
+  /// then either the host's [SmartEditorSettings.onImageLongPress] override or,
+  /// when [SmartEditorSettings.enableImagePreview] is on, the built-in
+  /// full-screen pinch-zoom / pan viewer.
+  void _handleImageLongPress(ImageNode node) {
+    HapticFeedback.mediumImpact();
+
+    final override = widget.editorSettings.onImageLongPress;
+    if (override != null) {
+      override(node);
+      return;
     }
 
-    final providerHook = widget.editorSettings.imageProvider;
-    if (providerHook != null) {
-      final provider = providerHook(ctx);
-      if (provider != null) return _imageFromProvider(ctx, provider);
-    }
-
-    if (ctx.bytes != null) {
-      return _imageFromProvider(ctx, MemoryImage(ctx.bytes!));
-    }
-    if (ctx.src.startsWith('http://') || ctx.src.startsWith('https://')) {
-      return _imageFromProvider(ctx, NetworkImage(ctx.src));
-    }
-    return _errorPlaceholder(ctx);
-  }
-
-  Widget _imageFromProvider(ImageRenderContext ctx, ImageProvider provider) {
-    return Image(
-      image: provider,
-      width: ctx.width,
-      height: ctx.height,
-      fit: ctx.fit,
-      errorBuilder: (context, error, stack) {
-        _notifyImageError(ctx.node, error);
-        return _errorPlaceholder(ctx);
-      },
-      loadingBuilder: (context, child, progress) {
-        if (progress == null) return child;
-        return _loadingPlaceholder(ctx);
-      },
-    );
-  }
-
-  /// A bordered placeholder shown when an image can't be decoded/loaded,
-  /// surfacing the `alt` text.
-  Widget _errorPlaceholder(ImageRenderContext ctx) {
-    final isDark = widget.isDarkMode;
-    final border = isDark ? Colors.white24 : Colors.black26;
-    final fg = isDark ? Colors.white54 : Colors.black45;
-    final alt = ctx.node.alt;
-    return Container(
-      width: ctx.width,
-      height: ctx.height,
-      constraints: const BoxConstraints(minWidth: 80, minHeight: 60),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        border: Border.all(color: border),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.broken_image_outlined, size: 20, color: fg),
-          if (alt.isNotEmpty) ...[
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                alt,
-                style: TextStyle(color: fg, fontSize: 12),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _loadingPlaceholder(ImageRenderContext ctx) {
-    return SizedBox(
-      width: ctx.width,
-      height: ctx.height ?? 80,
-      child: const Center(
-        child: SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      ),
-    );
+    if (!widget.editorSettings.enableImagePreview) return;
+    showImagePreview(context, node: node, settings: widget.editorSettings);
   }
 
   void _notifyImageError(ImageNode node, Object error) {
@@ -921,24 +980,6 @@ class BlockWidgetState extends State<BlockWidget> {
     }
   }
 
-  /// Decodes a `data:` URI into bytes + MIME. Handles base64 and percent-encoded
-  /// payloads; returns null on malformed input (→ error placeholder).
-  ({Uint8List bytes, String? mime})? _decodeDataUri(String src) {
-    try {
-      final comma = src.indexOf(',');
-      if (comma < 0) return null;
-      final header = src.substring(5, comma); // strip leading 'data:'
-      final payload = src.substring(comma + 1);
-      final isBase64 = header.toLowerCase().contains(';base64');
-      final mime = header.split(';').first.trim();
-      final bytes = isBase64
-          ? base64.decode(payload.trim())
-          : Uint8List.fromList(utf8.encode(Uri.decodeComponent(payload)));
-      return (bytes: bytes, mime: mime.isEmpty ? null : mime);
-    } catch (_) {
-      return null;
-    }
-  }
 }
 
 /// Dialog for entering a custom image size (a number + px/% unit). Owns its

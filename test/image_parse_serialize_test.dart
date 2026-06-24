@@ -90,20 +90,34 @@ void main() {
   });
 
   group('serialize <img>', () {
-    test('8. round-trip basic + px width, self-closing', () {
+    test('8. round-trip basic + px width, self-closing, max-width:100%', () {
       final doc =
           parser.parse('<img src="https://x/y.png" alt="hi" width="200">');
       final html = serializer.serialize(doc);
       expect(html,
-          '<img src="https://x/y.png" alt="hi" width="200" style="width: 200px"/>');
+          '<img src="https://x/y.png" alt="hi" width="200" style="width: 200px; max-width: 100%"/>');
+      // The responsive cap is ignored on re-parse: width stays exactly px(200).
+      expect(onlyImage(parser.parse(html)).width, const ImageSize.px(200));
     });
 
-    test('9. percent width round-trips', () {
+    test('9. percent width round-trips (max-width:100% ignored on re-parse)',
+        () {
       final doc = parser.parse('<img src="u" style="width:50%">');
       final html = serializer.serialize(doc);
-      expect(html, contains('style="width: 50%"'));
-      // re-parse to the same size
+      expect(html, contains('width: 50%'));
+      expect(html, contains('max-width: 100%'));
+      // re-parse to the same size — max-width does not clobber width.
       expect(onlyImage(parser.parse(html)).width, const ImageSize.percent(50));
+    });
+
+    test('max-width:100% emitted even for an intrinsic (unsized) image', () {
+      final doc = parser.parse('<img src="u">');
+      final html = serializer.serialize(doc);
+      expect(html, contains('style="max-width: 100%"'));
+      // Idempotent: still no typed width/height after a round-trip.
+      final reparsed = onlyImage(parser.parse(html));
+      expect(reparsed.width, isNull);
+      expect(reparsed.height, isNull);
     });
 
     test('center alignment round-trips', () {

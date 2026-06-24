@@ -95,6 +95,9 @@ class SmartEditorSettings {
     this.defaultImageWidth,
     this.parseInlineSvg,
     this.allowImageResize = true,
+    this.enableImagePreview = true,
+    this.onImageLongPress,
+    this.imagePreviewMaxScale = 5.0,
   });
 
   // ─── Core & HTML ──────────────────────────────────────────────
@@ -357,8 +360,26 @@ class SmartEditorSettings {
   /// vs inline `<svg>` markup — only the latter needs this flag).
   final bool? parseInlineSvg;
 
-  /// Whether edit mode shows the interactive resize affordance.
+  /// Whether edit mode shows the interactive resize affordance (the resize
+  /// menu **and** the freehand drag handle).
   final bool allowImageResize;
+
+  /// Long-press an image to open the built-in full-screen pinch-zoom / pan
+  /// viewer (a lightbox). Active in both read-only and edit mode. Default true.
+  /// Set false to disable the built-in viewer; a non-null [onImageLongPress]
+  /// still overrides it. See the README "Images" section.
+  final bool enableImagePreview;
+
+  /// Host override for an image long-press (read-only and edit). When non-null
+  /// it **fully replaces** the built-in preview viewer — the haptic still fires
+  /// first, then this is called instead of opening the lightbox. Mirrors
+  /// [onLinkLongPress]. Null = use the built-in viewer when [enableImagePreview].
+  final void Function(ImageNode node)? onImageLongPress;
+
+  /// Maximum zoom factor for the built-in preview viewer's `InteractiveViewer`.
+  /// Defaults to 5.0. Has no effect when [enableImagePreview] is false or
+  /// [onImageLongPress] overrides the viewer.
+  final double imagePreviewMaxScale;
 }
 
 /// Styling configuration for the `<hr>` horizontal rule block.

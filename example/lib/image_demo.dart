@@ -36,15 +36,27 @@ class _ImageDemoPageState extends State<ImageDemoPage> {
         child: SmartEditor(
           controller: controller,
           editorSettings: SmartEditorSettings(
-            initialText: '<p>Try the picture button, paste an image, or resize '
-                'the one below via its corner menu.</p>'
+            initialText: '<p>Tap the image to select it, then drag its '
+                'bottom-right handle to resize (or use the corner menu). '
+                'Tap-and-hold any image to open the full-screen viewer.</p>'
                 '<img src="https://flutter.github.io/assets-for-api-docs/assets/widgets/owl.jpg" '
                 'alt="An owl" width="320">',
 
             // ── Sizing ──────────────────────────────────────────────
+            // Resize shows BOTH the corner menu and a freehand drag handle on
+            // a tap-selected image. Drag stores `%` for cross-platform
+            // proportional consistency; the serializer also caps every image
+            // at `max-width: 100%` so nothing overflows a narrower viewport.
             allowImageResize: true,
             maxImageWidth: 600,
             defaultImageWidth: const ImageSize.percent(100),
+
+            // ── Read-only preview / lightbox ────────────────────────
+            // Long-press an image → haptic → full-screen pinch-zoom / pan
+            // viewer (default on). Set onImageLongPress to fully override it.
+            enableImagePreview: true,
+            imagePreviewMaxScale: 5.0,
+            // onImageLongPress: (node) => developer.log('long-press ${node.src}'),
 
             // ── Toolbar picker: returns a request for the URL dialog path,
             //    or wire image_picker/file_picker here in a real app. Returning
