@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_smart_editor/src/core/document/document.dart';
 import '../../models/enums.dart';
 import '../../models/image_insert.dart';
+import '../../models/image_size.dart';
 import '../infra/html_parser.dart';
 import '../infra/html_serializer.dart';
 import 'undo_redo_manager.dart';
@@ -817,6 +818,18 @@ class DocumentController extends ChangeNotifier {
       height: r.height,
     );
     document.blocks.insertAll(blockIndex + 1, [img, ParagraphNode()]);
+    _notifyChanged();
+  }
+
+  /// Sets the display size of the [ImageNode] at [blockIndex] (null = intrinsic).
+  /// One undo step. No-op if the block isn't an image.
+  void resizeImage(int blockIndex, ImageSize? width, ImageSize? height) {
+    if (blockIndex < 0 || blockIndex >= document.blocks.length) return;
+    final block = document.blocks[blockIndex];
+    if (block is! ImageNode) return;
+    _saveState();
+    block.width = width;
+    block.height = height;
     _notifyChanged();
   }
 

@@ -37,6 +37,7 @@ class BlockWidget extends StatefulWidget {
     this.onIncreaseIndent,
     this.onDecreaseIndent,
     this.onHrTap,
+    this.onImageResize,
     this.orderedCount = 1,
     this.showDragHandle = true,
     this.dragIndex,
@@ -76,6 +77,11 @@ class BlockWidget extends StatefulWidget {
 
   // HR-specific callbacks
   final void Function(int blockIndex)? onHrTap;
+
+  /// Image-specific: set the display size (null = intrinsic) via the resize
+  /// affordance. Wired to the document controller (one undo step).
+  final void Function(int blockIndex, ImageSize? width, ImageSize? height)?
+      onImageResize;
 
   /// Pre-computed ordered list counter (computed by smart_editor_widget.dart).
   final int orderedCount;
@@ -726,6 +732,20 @@ class BlockWidgetState extends State<BlockWidget> {
       );
     }
 
+    // Edit-mode resize affordance (menu-based px/%), overlaid top-right.
+    final canResize = !widget.readOnly &&
+        widget.editorSettings.allowImageResize &&
+        widget.onImageResize != null;
+    if (canResize) {
+      result = Stack(
+        clipBehavior: Clip.none,
+        children: [
+          result,
+          Positioned(top: 4, right: 4, child: _buildResizeMenu(node)),
+        ],
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Align(
@@ -733,6 +753,50 @@ class BlockWidgetState extends State<BlockWidget> {
         child: result,
       ),
     );
+  }
+
+  /// The menu-based resize control: presets (Original / 25–100%) plus a
+  /// custom px/% dialog. Each choice routes through [onImageResize].
+  Widget _buildResizeMenu(ImageNode node) {
+    return Material(
+      color: Colors.black54,
+      borderRadius: BorderRadius.circular(4),
+      child: PopupMenuButton<String>(
+        icon: const Icon(Icons.photo_size_select_large,
+            size: 16, color: Colors.white),
+        tooltip: 'Resize image',
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+        onSelected: (value) => _onResizeSelected(node, value),
+        itemBuilder: (_) => const [
+          PopupMenuItem(value: 'orig', child: Text('Original')),
+          PopupMenuItem(value: '25', child: Text('25%')),
+          PopupMenuItem(value: '50', child: Text('50%')),
+          PopupMenuItem(value: '75', child: Text('75%')),
+          PopupMenuItem(value: '100', child: Text('100%')),
+          PopupMenuItem(value: 'custom', child: Text('Custom…')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _onResizeSelected(ImageNode node, String value) async {
+    final cb = widget.onImageResize;
+    if (cb == null) return;
+    if (value == 'orig') {
+      cb(widget.blockIndex, null, null);
+      return;
+    }
+    if (value == 'custom') {
+      final size = await showDialog<ImageSize>(
+        context: context,
+        builder: (_) => _ImageSizeDialog(initial: node.width),
+      );
+      if (size != null) cb(widget.blockIndex, size, null);
+      return;
+    }
+    final pct = double.tryParse(value);
+    if (pct != null) cb(widget.blockIndex, ImageSize.percent(pct), null);
   }
 
   /// The resolution ladder (shared by edit + read-only):
@@ -874,6 +938,90 @@ class BlockWidgetState extends State<BlockWidget> {
     } catch (_) {
       return null;
     }
+  }
+}
+
+/// Dialog for entering a custom image size (a number + px/% unit). Owns its
+/// [TextEditingController] so it's disposed after the route closes. Pops the
+/// chosen [ImageSize], or null on cancel.
+class _ImageSizeDialog extends StatefulWidget {
+  const _ImageSizeDialog({this.initial});
+
+  final ImageSize? initial;
+
+  @override
+  State<_ImageSizeDialog> createState() => _ImageSizeDialogState();
+}
+
+class _ImageSizeDialogState extends State<_ImageSizeDialog> {
+  late final TextEditingController _controller;
+  late ImageSizeUnit _unit;
+
+  @override
+  void initState() {
+    super.initState();
+    final init = widget.initial;
+    _unit = (init != null && init.unit != ImageSizeUnit.auto)
+        ? init.unit
+        : ImageSizeUnit.px;
+    _controller = TextEditingController(
+      text: (init?.value != null) ? init!.value!.round().toString() : '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final value = double.tryParse(_controller.text.trim());
+    if (value == null || value <= 0) {
+      Navigator.of(context).pop();
+      return;
+    }
+    Navigator.of(context).pop(ImageSize(value, _unit));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Custom size'),
+      content: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Width'),
+              onSubmitted: (_) => _submit(),
+            ),
+          ),
+          const SizedBox(width: 12),
+          ToggleButtons(
+            isSelected: [
+              _unit == ImageSizeUnit.px,
+              _unit == ImageSizeUnit.percent,
+            ],
+            onPressed: (i) => setState(() => _unit =
+                i == 0 ? ImageSizeUnit.px : ImageSizeUnit.percent),
+            borderRadius: BorderRadius.circular(6),
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 40),
+            children: const [Text('px'), Text('%')],
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        TextButton(onPressed: _submit, child: const Text('Apply')),
+      ],
+    );
   }
 }
 

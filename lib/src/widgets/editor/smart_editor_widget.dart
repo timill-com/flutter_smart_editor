@@ -10,6 +10,7 @@ import '../../models/editor_settings.dart';
 import '../../models/enums.dart';
 import '../../models/image_insert.dart';
 import '../../models/image_render.dart';
+import '../../models/image_size.dart';
 import '../../models/pending_inline_format.dart';
 import '../blocks/block_widget.dart';
 import '../blocks/table_block_widget.dart';
@@ -349,6 +350,11 @@ class SmartEditorWidgetState extends State<SmartEditorWidget> {
       _focusNodes[id]?.requestFocus();
       _focusedBlockIndex = nextIndex;
     }
+  }
+
+  void _onImageResize(int blockIndex, ImageSize? width, ImageSize? height) {
+    _docController.resizeImage(blockIndex, width, height);
+    rebuild();
   }
 
   /// Computes the 1-based ordered counter for a list item at [blockIndex].
@@ -1122,6 +1128,7 @@ class SmartEditorWidgetState extends State<SmartEditorWidget> {
       onIncreaseIndent: () => _onIncreaseIndent(index),
       onDecreaseIndent: () => _onDecreaseIndent(index),
       onHrTap: _onHrTap,
+      onImageResize: _onImageResize,
       orderedCount: _computeOrderedCount(index),
       showDragHandle: showDragHandle,
       readOnly:

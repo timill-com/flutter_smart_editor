@@ -489,6 +489,13 @@ class SmartEditorController extends ChangeNotifier {
     _editorWidgetState?.rebuild();
   }
 
+  /// Sets the display size of the image at [blockIndex] (null = intrinsic).
+  /// One undo step.
+  void resizeImage(int blockIndex, {ImageSize? width, ImageSize? height}) {
+    _documentController.resizeImage(blockIndex, width, height);
+    _editorWidgetState?.rebuild();
+  }
+
   Future<void>? _dataUriResolve;
 
   /// Post-parse async pass: when [resolveDataUris] is on and [onImageInsert] is
